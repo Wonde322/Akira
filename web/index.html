@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Akira</title>
+
+<style>
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    background: #111111;
+    color: #eeeeee;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+}
+
+.app {
+    width: min(900px, 100%);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.header {
+    height: 70px;
+    display: flex;
+    align-items: center;
+    padding: 0 24px;
+    border-bottom: 1px solid #292929;
+    font-size: 20px;
+    font-weight: 600;
+}
+
+.status {
+    margin-left: 12px;
+    font-size: 12px;
+    color: #777777;
+    font-weight: 400;
+}
+
+.messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 30px 24px;
+}
+
+.message {
+    max-width: 75%;
+    padding: 14px 17px;
+    margin-bottom: 14px;
+    border-radius: 16px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+}
+
+.user {
+    margin-left: auto;
+    background: #292929;
+}
+
+.akira {
+    margin-right: auto;
+    background: #1b1b1b;
+}
+
+.input-area {
+    padding: 18px 24px 24px;
+    border-top: 1px solid #292929;
+    display: flex;
+    gap: 10px;
+}
+
+input {
+    flex: 1;
+    background: #1b1b1b;
+    color: #eeeeee;
+    border: 1px solid #333333;
+    border-radius: 14px;
+    padding: 14px 16px;
+    font-size: 15px;
+    outline: none;
+}
+
+input:focus {
+    border-color: #555555;
+}
+
+button {
+    width: 50px;
+    border: none;
+    border-radius: 14px;
+    background: #eeeeee;
+    color: #111111;
+    font-size: 18px;
+    cursor: pointer;
+}
+
+button:disabled {
+    opacity: 0.4;
+}
+
+.mic-listening {
+    background: #ff5555 !important;
+}
+</style>
+
+</head>
+
+<body>
+
+<div class="app">
+
+    <div class="header">
+        AKIRA
+        <span class="status" id="status">подключение...</span>
+    </div>
+
+    <div class="messages" id="messages"></div>
+
+    <div class="input-area">
+        <input
+            id="input"
+            type="text"
+            placeholder="Напиши Акире..."
+            autocomplete="off"
+        >
+        <button id="mic" title="Голосовой ввод">🎙</button><button id="send">↑</button>
+    </div>
+
+</div>
+
+<script>
+const input = document.getElementById("input");
+const send = document.getElementById("send");
+const mic = document.getElementById("mic");
+const messages = document.getElementById("messages");
+const status = document.getElementById("status");
+
+let isListening = false;
+let recognition = null;
+
+function addMessage(text, type) {
+    const element = document.createElement("div");
+    element.className = "message " + type;
+    element.textContent = text;
+    messages.appendChild(element);
+    messages.scrollTop = messages.scrollHeight;
+    return element;
+}
+
+async function sendMessage() {
+    const message = input.value.trim();
+
+    if (!message) return;
+
+    input.value = "";
+    input.disabled = true;
+    send.disabled = true;
+
+    addMessage(message, "user");
+
+    const thinking = addMessage("Думаю...", "akira");
+
+    try {
+        const response = await fetch("/ask", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                message: message
+            })
+        });
+
+        const data = await response.json();
+
+        thinking.remove();
+
+        if (data.answer) {
+            addMessage(data.answer, "akira");
+            status.textContent = "онлайн";
+        } else {
+            addMessage(
+                "Ошибка: " + (data.error || "неизвестная ошибка"),
+                "akira"
+            );
+            status.textContent = "ошибка";
+        }
+
+    } catch (error) {
+        thinking.remove();
+        addMessage("Не удалось подключиться к Акире.", "akira");
+        status.textContent = "нет соединения";
+        console.error(error);
+    }
+
+    input.disabled = false;
+    send.disabled = false;
+    input.focus();
+}
+
+send.addEventListener("click", sendMessage);
+
+input.addEventListener("keydown", event => {
+    if (event.key === "Enter") {
+        event.preventDefault();
+        sendMessage();
+    }
+});
+
+
+const SpeechRecognition =
+    window.SpeechRecognition ||
+    window.webkitSpeechRecognition;
+
+if (SpeechRecognition) {
+
+    recognition = new SpeechRecognition();
+
+    recognition.lang = "ru-RU";
+    recognition.continuous = false;
+    recognition.interimResults = true;
+
+    recognition.onstart = () => {
+        isListening = true;
+        mic.classList.add("mic-listening");
+        mic.textContent = "■";
+        status.textContent = "слушаю...";
+    };
+
+    recognition.onresult = event => {
+        let text = "";
+
+        for (
+            let i = event.resultIndex;
+            i < event.results.length;
+            i++
+        ) {
+            text += event.results[i][0].transcript;
+        }
+
+        input.value = text;
+    };
+
+    recognition.onend = () => {
+        isListening = false;
+        mic.classList.remove("mic-listening");
+        mic.textContent = "🎙";
+        status.textContent = "онлайн";
+    };
+
+    recognition.onerror = event => {
+        console.log("Speech recognition:", event.error);
+
+        isListening = false;
+        mic.classList.remove("mic-listening");
+        mic.textContent = "🎙";
+        status.textContent = "ошибка микрофона";
+    };
+
+    mic.addEventListener("click", () => {
+        if (isListening) {
+            recognition.stop();
+        } else {
+            recognition.start();
+        }
+    });
+
+} else {
+    mic.disabled = true;
+    mic.title = "Распознавание речи не поддерживается";
+    status.textContent = "онлайн";
+}
+
+status.textContent = "онлайн";
+input.focus();
+</script>
+
+</body>
+</html>
