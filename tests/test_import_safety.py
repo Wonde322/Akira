@@ -13,6 +13,7 @@ import pytest
         "goal_analysis",
         "proactive",
         "spotify_control",
+        "tool_registry",
         "brain",
     ],
 )

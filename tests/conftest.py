@@ -14,6 +14,7 @@ PROJECT_MODULES = {
     "permissions",
     "proactive",
     "spotify_control",
+    "tool_registry",
     "tools",
 }
 

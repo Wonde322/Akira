@@ -1,29 +1,14 @@
 import json
 import os
 
+from tool_registry import get_default_tool_permissions
+
 
 PERMISSIONS_FILE = "permissions.json"
 
 
 DEFAULT_PERMISSIONS = {
-    "open_app": "auto",
-    "close_app": "auto",
-    "set_volume": "auto",
-    "get_volume": "auto",
-    "mute_volume": "auto",
-    "get_running_apps": "auto",
-
-    "add_goal": "auto",
-    "get_goals": "auto",
-    "add_task": "auto",
-    "get_tasks": "auto",
-    "complete_task": "auto",
-
-    "add_event": "auto",
-    "get_recent_events": "auto",
-    "analyze_period": "auto",
-
-    "delete_file": "confirm",
+    **get_default_tool_permissions(),
     "send_message": "confirm",
     "change_system_settings": "confirm",
     "shutdown_computer": "confirm"
