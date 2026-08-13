@@ -1,23 +1,4 @@
-import json
-import os
-from datetime import datetime, timedelta
-
-
-MEMORY_FILE = "memory.json"
-
-
-def load_activity():
-    if not os.path.exists(MEMORY_FILE):
-        return []
-
-    try:
-        with open(MEMORY_FILE, "r", encoding="utf-8") as file:
-            memory = json.load(file)
-
-        return memory.get("activity", [])
-
-    except Exception:
-        return []
+from memory import get_activity_for_period
 
 
 def format_duration(seconds):
@@ -33,25 +14,18 @@ def format_duration(seconds):
 
 
 def get_activity_stats(days=1):
-    activity = load_activity()
-
-    cutoff = datetime.now() - timedelta(days=days)
+    activity = get_activity_for_period(days)
 
     totals = {}
 
     for session in activity:
         try:
-            started = datetime.fromisoformat(session["started"])
-
-            if started < cutoff:
-                continue
-
             app = session["app"]
             duration = session["duration_seconds"]
 
             totals[app] = totals.get(app, 0) + duration
 
-        except (KeyError, ValueError):
+        except (KeyError, TypeError):
             continue
 
     if not totals:

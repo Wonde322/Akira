@@ -1,11 +1,10 @@
 import json
 import os
-from datetime import datetime, timedelta
 
 from groq import Groq
+from memory import get_activity_totals, get_memory_snapshot
 
 
-MEMORY_FILE = "memory.json"
 MODEL = "openai/gpt-oss-120b"
 
 client = Groq(
@@ -13,48 +12,13 @@ client = Groq(
 )
 
 
-def load_memory():
-    if not os.path.exists(MEMORY_FILE):
-        return {}
-
-    try:
-        with open(MEMORY_FILE, "r", encoding="utf-8") as file:
-            return json.load(file)
-    except Exception:
-        return {}
-
-
 def check_proactive(days: int = 3) -> str:
-    memory = load_memory()
+    memory = get_memory_snapshot()
 
     goals = memory.get("goals", [])
     tasks = memory.get("tasks", [])
     events = memory.get("events", [])
-    activity = memory.get("activity", [])
-
-    cutoff = datetime.now() - timedelta(days=days)
-
-    recent_activity = []
-
-    for session in activity:
-        try:
-            started = datetime.fromisoformat(session["started"])
-
-            if started >= cutoff:
-                recent_activity.append(session)
-
-        except (KeyError, ValueError):
-            continue
-
-    activity_totals = {}
-
-    for session in recent_activity:
-        app = session.get("app", "Неизвестно")
-        seconds = session.get("duration_seconds", 0)
-
-        activity_totals[app] = (
-            activity_totals.get(app, 0) + seconds
-        )
+    activity_totals = get_activity_totals(days)
 
     def format_time(seconds):
         minutes = int(seconds // 60)

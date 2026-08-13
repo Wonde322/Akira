@@ -1,8 +1,7 @@
-import json
 import os
-from datetime import datetime, timedelta
 
 from groq import Groq
+from memory import get_events_for_period
 
 
 MODEL = "openai/gpt-oss-120b"
@@ -10,35 +9,6 @@ MODEL = "openai/gpt-oss-120b"
 client = Groq(
     api_key=os.environ["GROQ_API_KEY"]
 )
-
-
-def get_events_for_period(days: int = 7):
-    """Возвращает события за последние указанное количество дней."""
-
-    if not os.path.exists("memory.json"):
-        return []
-
-    try:
-        with open("memory.json", "r", encoding="utf-8") as file:
-            memory = json.load(file)
-    except Exception:
-        return []
-
-    cutoff = datetime.now() - timedelta(days=days)
-
-    events = []
-
-    for event in memory.get("events", []):
-        try:
-            event_time = datetime.fromisoformat(event["time"])
-
-            if event_time >= cutoff:
-                events.append(event)
-
-        except (KeyError, ValueError):
-            continue
-
-    return events
 
 
 def analyze_period(days: int = 7) -> str:
