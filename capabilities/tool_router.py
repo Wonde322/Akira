@@ -362,7 +362,17 @@ def select_tool_schemas(
     task_active=False,
     pinned_tools=None,
 ):
-    """Return the most relevant tool schemas for the current reasoning turn."""
+    """Return relevant tool schemas for the current reasoning turn.
+
+    Mandatory execution primitives are always preserved.
+
+    The remaining capacity is reserved for the most relevant
+    concrete tools selected by lexical + semantic capability
+    scoring.
+
+    Therefore task-control tools cannot consume the entire
+    planner tool budget.
+    """
 
     if not schemas:
         return []
@@ -370,17 +380,43 @@ def select_tool_schemas(
     scored = []
 
     for schema in schemas:
-        name = schema.get("function", {}).get("name", "")
-        score = _score(query, schema)
 
-        scored.append((score, name, schema))
+        name = (
+            schema
+            .get("function", {})
+            .get("name", "")
+        )
 
-    scored.sort(key=lambda item: (-item[0], item[1]))
+        score = _score(
+            query,
+            schema,
+        )
 
-    mandatory = _always_include(task_active)
+        scored.append(
+            (
+                score,
+                name,
+                schema,
+            )
+        )
 
-    # Discovered capabilities remain visible until the current task ends.
+    scored.sort(
+        key=lambda item: (
+            -item[0],
+            item[1],
+        )
+    )
+
+    mandatory = _always_include(
+        task_active
+    )
+
+    # --------------------------------------------------------
+    # Discovered capabilities remain visible until task ends.
+    # --------------------------------------------------------
+
     if pinned_tools:
+
         mandatory.update(
             str(name)
             for name in pinned_tools
@@ -390,33 +426,77 @@ def select_tool_schemas(
     selected = []
     selected_names = set()
 
-    # Always preserve mandatory execution primitives.
+    # --------------------------------------------------------
+    # 1. Mandatory tools first.
+    #
+    # They are not allowed to consume the dynamic-tool budget.
+    # --------------------------------------------------------
+
     for _, name, schema in scored:
-        if name in mandatory:
-            selected.append(schema)
-            selected_names.add(name)
 
-    # Add highest scoring tools.
-    for score, name, schema in scored:
-        if name in selected_names:
+        if name not in mandatory:
             continue
-
-        if len(selected) >= limit:
-            break
 
         selected.append(schema)
         selected_names.add(name)
 
-    # Conservative fallback:
-    # if relevance is extremely weak, don't risk hiding the actual tool.
+    # --------------------------------------------------------
+    # 2. Reserve the remaining limit for actual task tools.
+    #
+    # Example:
+    #
+    # limit = 12
+    # mandatory = 8
+    #
+    # => 4 real task tools are still allowed.
+    # --------------------------------------------------------
+
+    remaining_slots = max(
+        0,
+        limit - len(selected),
+    )
+
+    # --------------------------------------------------------
+    # 3. Add highest-scoring concrete tools.
+    # --------------------------------------------------------
+
+    added_dynamic = 0
+
+    for score, name, schema in scored:
+
+        if name in selected_names:
+            continue
+
+        if added_dynamic >= remaining_slots:
+            break
+
+        # Ignore completely irrelevant tools while there are
+        # meaningful candidates available.
+        if score <= 0:
+            continue
+
+        selected.append(schema)
+        selected_names.add(name)
+        added_dynamic += 1
+
+    # --------------------------------------------------------
+    # 4. Conservative fallback.
+    #
+    # If there are no useful scores at all, expose the original
+    # schemas rather than hiding every tool.
+    # --------------------------------------------------------
+
     useful_scores = [
-        score for score, _, _ in scored
+        score
+        for score, _, _ in scored
         if score > 0
     ]
 
     if not useful_scores:
         return list(schemas)
 
+    # If relevance is extremely weak, preserve the old
+    # conservative behaviour.
     if max(useful_scores) < 1.0:
         return list(schemas)
 
