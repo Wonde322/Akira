@@ -752,7 +752,13 @@ def ask(message, session_id=None):
             model=MODEL,
             messages=messages,
             tools=active_tools,
-            tool_choice="auto",
+            # Once computer-use has started, every reasoning turn must
+            # produce an executable tool call. Plain text is not progress.
+            tool_choice=(
+                "required"
+                if task_active
+                else "auto"
+            ),
         )
 
         assistant_message = response.choices[0].message
