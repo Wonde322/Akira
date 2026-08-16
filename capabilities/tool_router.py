@@ -236,12 +236,10 @@ def _score(query, schema):
     # Existing lexical scoring.
     # --------------------------------------------------------
 
-    query_tokens = set(
-        re.findall(
-            r"[a-zA-Zа-яА-Я0-9_]+",
-            query_text,
-        )
-    )
+    # Use the router's normalized token expansion here as well.
+    # This keeps Russian/English aliases effective after a task
+    # becomes active and the tool set is re-ranked.
+    query_tokens = _tokens(query_text)
 
     searchable = (
         name
@@ -249,12 +247,7 @@ def _score(query, schema):
         + description
     )
 
-    schema_tokens = set(
-        re.findall(
-            r"[a-zA-Zа-яА-Я0-9_]+",
-            searchable,
-        )
-    )
+    schema_tokens = _tokens(searchable)
 
     overlap = (
         query_tokens
