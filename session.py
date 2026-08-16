@@ -35,6 +35,10 @@ class Session:
             "failed_actions": [],
             "successful_actions": [],
 
+            "action_history": [],
+            "recovery_context": None,
+            "recovery_tools": [],
+
             # План выполнения. Это состояние агента, а не история чата.
             "plan": [],
             "plan_index": 0,
@@ -107,6 +111,48 @@ class Session:
         """Фиксирует попытку восстановления после неудачи."""
         if self.task is not None:
             self.task["recovery_count"] += 1
+
+    def register_action_history(
+        self,
+        action,
+        arguments=None,
+        result=None,
+        recovery=None,
+    ):
+        """Stores execution evidence for adaptive recovery."""
+        if self.task is None:
+            return
+
+        result = result if isinstance(result, dict) else {}
+
+        entry = {
+            "action": str(action or ""),
+            "arguments": arguments or {},
+            "success": bool(result.get("success")),
+            "error": result.get("error"),
+            "output": str(result.get("output") or "")[:1000],
+        }
+
+        self.task["action_history"].append(entry)
+        self.task["action_history"] = (
+            self.task["action_history"][-30:]
+        )
+
+        if recovery and recovery.get("failed"):
+            self.task["recovery_context"] = recovery
+            self.task["recovery_tools"] = list(
+                recovery.get("fallback_tools") or []
+            )[:12]
+        else:
+            self.clear_recovery()
+
+    def clear_recovery(self):
+        """Clears the current recovery recommendation."""
+        if self.task is None:
+            return
+
+        self.task["recovery_context"] = None
+        self.task["recovery_tools"] = []
 
     def set_plan(self, steps):
         """Устанавливает/заменяет план текущей задачи."""

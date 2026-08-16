@@ -9,6 +9,10 @@ from capabilities.observation import (
     prune_observation_history,
 )
 from capabilities.protocol import is_structured, result_to_text
+from capabilities.recovery import (
+    classify_failure,
+    should_force_observe,
+)
 from capabilities.tool_router import select_tool_schemas
 from config import (
     COMPUTER_USE_MAX_STEPS,
@@ -462,6 +466,8 @@ def _tools_for_reasoning(session, query, task_active):
             "last_result": task.get("last_result"),
             "failed_actions": task.get("failed_actions", [])[-3:],
             "goal_verification": task.get("goal_verification"),
+            "recovery_context": task.get("recovery_context"),
+            "recovery_tools": task.get("recovery_tools", []),
         }
 
         routing_query += (
@@ -479,6 +485,13 @@ def _tools_for_reasoning(session, query, task_active):
         pinned = list(
             session.task.get("discovered_tools", [])
         )
+
+        for tool_name in session.task.get(
+            "recovery_tools",
+            [],
+        ):
+            if tool_name not in pinned:
+                pinned.append(tool_name)
 
     tools = select_tool_schemas(
         query=routing_query,
@@ -827,6 +840,17 @@ def ask(message, session_id=None):
                         "discovered_tools",
                         [],
                     ),
+                    "recovery_context": task.get(
+                        "recovery_context",
+                    ),
+                    "recovery_tools": task.get(
+                        "recovery_tools",
+                        [],
+                    ),
+                    "action_history": task.get(
+                        "action_history",
+                        [],
+                    )[-8:],
                 }
 
                 result_text += (
@@ -850,6 +874,23 @@ def ask(message, session_id=None):
             if task_active:
                 session.register_result(function_name, result)
 
+                recovery = classify_failure(
+                    function_name,
+                    result,
+                )
+
+                session.register_action_history(
+                    function_name,
+                    arguments,
+                    result,
+                    recovery,
+                )
+
+                if recovery.get("failed"):
+                    session.register_recovery()
+                else:
+                    session.clear_recovery()
+
             if function_name in STATE_CHANGING_TOOLS:
                 any_state_change = True
                 pending_observe = True
@@ -862,6 +903,16 @@ def ask(message, session_id=None):
                         "unverified",
                         "Состояние изменилось после предыдущей проверки.",
                     )
+
+            if (
+                task_active
+                and result.get("error")
+                and should_force_observe(
+                    function_name,
+                    result,
+                )
+            ):
+                pending_observe = True
 
             if task_active and result.get("error") in ("denied", "blocked"):
                 stop_reason = "permission"
