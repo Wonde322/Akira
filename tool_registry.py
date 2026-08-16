@@ -757,3 +757,59 @@ TOOL_REGISTRY = TOOL_REGISTRY + (
         "auto",
     ),
 )
+
+# === AKIRA EVENT BUS ===
+#
+# Triggers turn events into normal Akira background tasks.
+# The event payload is untrusted data and is passed as context,
+# never as system instructions.
+
+TOOL_REGISTRY = TOOL_REGISTRY + (
+    ToolDefinition(
+        "create_trigger",
+        "Создаёт постоянный trigger: при указанном событии Akira запускает заданную цель через обычный TaskRuntime.",
+        _parameters({
+            "event_type": {
+                "type": "string",
+                "description": "Тип события, например task.completed или task.failed.",
+            },
+            "goal": {
+                "type": "string",
+                "description": "Цель, которую Akira должен выполнить после события. Можно использовать {{event.type}}, {{event.id}}, {{event.timestamp}}, {{event.payload}}.",
+            },
+            "cooldown_seconds": {
+                "type": "integer",
+                "description": "Минимальный интервал между срабатываниями trigger.",
+            },
+        }, ["event_type", "goal"]),
+        "event_bus",
+        "create_trigger",
+        "auto",
+    ),
+    ToolDefinition(
+        "cancel_trigger",
+        "Отключает постоянный event trigger.",
+        _parameters({
+            "trigger_id": {
+                "type": "string",
+                "description": "ID trigger.",
+            },
+        }, ["trigger_id"]),
+        "event_bus",
+        "cancel_trigger",
+        "auto",
+    ),
+    ToolDefinition(
+        "list_triggers",
+        "Показывает существующие event triggers.",
+        _parameters({
+            "limit": {
+                "type": "integer",
+                "description": "Количество trigger, максимум 100.",
+            },
+        }),
+        "event_bus",
+        "list_triggers",
+        "auto",
+    ),
+)

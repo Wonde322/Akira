@@ -48,6 +48,7 @@ class AkiraDaemon:
 
         self._runtime = None
         self._scheduler = None
+        self._event_bus = None
 
     # ========================================================
     # Lifecycle
@@ -67,9 +68,11 @@ class AkiraDaemon:
         # LLM/network is temporarily unavailable.
         from task_runtime import get_runtime
         from scheduler import get_scheduler
+        from event_bus import get_event_bus
 
         self._runtime = get_runtime()
         self._scheduler = get_scheduler()
+        self._event_bus = get_event_bus()
 
         self._started = True
 
@@ -137,6 +140,7 @@ class AkiraDaemon:
 
         self._maintain_runtime()
         self._tick_scheduler()
+        self._maintain_event_bus()
 
     def _maintain_runtime(self):
         runtime = self._runtime
@@ -179,6 +183,22 @@ class AkiraDaemon:
         except Exception as error:
             print(
                 "[Akira daemon] scheduler error:",
+                error,
+            )
+
+    def _maintain_event_bus(self):
+        bus = self._event_bus
+
+        if bus is None:
+            return
+
+        try:
+            bus.list_triggers(
+                limit=1
+            )
+        except Exception as error:
+            print(
+                "[Akira daemon] event bus error:",
                 error,
             )
 

@@ -316,6 +316,25 @@ class TaskRuntime:
 
                 self._save()
 
+                try:
+                    from event_bus import emit_event
+
+                    emit_event(
+                        "task.completed",
+                        {
+                            "task_id": task_id,
+                            "goal": goal,
+                            "result": str(result),
+                            "session_id": session_id,
+                        },
+                    )
+                except Exception as event_error:
+                    print(
+                        "[Akira task runtime] "
+                        "completion event error:",
+                        event_error,
+                    )
+
         except Exception as error:
 
             with self._lock:
@@ -343,6 +362,25 @@ class TaskRuntime:
                 )[-4000:]
 
                 self._save()
+
+                try:
+                    from event_bus import emit_event
+
+                    emit_event(
+                        "task.failed",
+                        {
+                            "task_id": task_id,
+                            "goal": goal,
+                            "error": str(error),
+                            "session_id": session_id,
+                        },
+                    )
+                except Exception as event_error:
+                    print(
+                        "[Akira task runtime] "
+                        "failure event error:",
+                        event_error,
+                    )
 
         finally:
 
