@@ -47,6 +47,25 @@ def _parameters(properties, required=None):
 
 TOOL_REGISTRY = (
     ToolDefinition(
+        "discover_capability",
+        "Ищет capability во всём registry, включая инструменты, которые "
+        "текущий relevance-router не показал. Используй, если для задачи "
+        "нужна конкретная возможность, которой нет среди текущих tools.",
+        _parameters({
+            "query": {
+                "type": "string",
+                "description": "Что именно должна уметь нужная capability.",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Максимум найденных capabilities (1-12).",
+            },
+        }, ["query"]),
+        "capabilities.discovery",
+        "discover_capability",
+        "auto",
+    ),
+    ToolDefinition(
         "plan_task",
         "Создаёт внутренний план выполнения сложной задачи.",
         _parameters({

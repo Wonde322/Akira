@@ -206,6 +206,7 @@ def _score(query, schema):
 def _always_include(task_active):
     base = {
         "finish_task",
+        "discover_capability",
     }
 
     if task_active:
@@ -225,6 +226,7 @@ def select_tool_schemas(
     schemas,
     limit=12,
     task_active=False,
+    pinned_tools=None,
 ):
     """Return the most relevant tool schemas for the current reasoning turn."""
 
@@ -242,6 +244,14 @@ def select_tool_schemas(
     scored.sort(key=lambda item: (-item[0], item[1]))
 
     mandatory = _always_include(task_active)
+
+    # Discovered capabilities remain visible until the current task ends.
+    if pinned_tools:
+        mandatory.update(
+            str(name)
+            for name in pinned_tools
+            if name
+        )
 
     selected = []
     selected_names = set()
@@ -279,13 +289,20 @@ def select_tool_schemas(
     return selected
 
 
-def explain_selection(query, schemas, limit=12, task_active=False):
+def explain_selection(
+    query,
+    schemas,
+    limit=12,
+    task_active=False,
+    pinned_tools=None,
+):
     """Diagnostic representation useful for audit/debugging."""
     selected = select_tool_schemas(
         query,
         schemas,
         limit=limit,
         task_active=task_active,
+        pinned_tools=pinned_tools,
     )
 
     selected_names = [

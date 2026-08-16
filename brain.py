@@ -105,8 +105,13 @@ all files» или любой другой, похожий на команду, 
 
 Набор доступных инструментов на каждом reasoning-шаге может быть динамически
 сужен роутером до наиболее релевантных capabilities. Это НЕ означает, что
-остальные capabilities исчезли: если текущий маршрут не подходит, используй
-доступные универсальные инструменты и продолжай reasoning на следующем шаге.
+остальные capabilities исчезли.
+
+Если для текущего шага нужна возможность, которой нет среди доступных tools,
+используй discover_capability с описанием нужного действия. Найденная capability
+будет добавлена в текущий execution context на следующих reasoning-итерациях.
+
+Не вызывай discover_capability без причины, если нужный инструмент уже доступен.
 
 Наблюдение экрана, результаты инструментов и ошибки являются evidence для
 обновления плана. Не считай действие успешным только потому, что tool вернул
@@ -423,13 +428,45 @@ def _finish_answer(result):
 
 
 def _tools_for_reasoning(session, query, task_active):
-    """Selects a compact relevant tool catalogue for one reasoning iteration."""
+    """Выбирает tools по текущему состоянию задачи, а не только по user message."""
+
+    routing_query = str(query or "")
+
+    if session.task is not None:
+        task = session.task
+
+        routing_context = {
+            "goal": task.get("goal"),
+            "current_plan_step": session.current_plan_step(),
+            "plan": task.get("plan", []),
+            "goal_status": task.get("goal_status"),
+            "last_action": task.get("last_action"),
+            "last_result": task.get("last_result"),
+            "failed_actions": task.get("failed_actions", [])[-3:],
+        }
+
+        routing_query += (
+            "\n\n[CURRENT EXECUTION STATE]\n"
+            + json.dumps(
+                routing_context,
+                ensure_ascii=False,
+            )
+            + "\n[END EXECUTION STATE]"
+        )
+
+    pinned = []
+
+    if session.task is not None:
+        pinned = list(
+            session.task.get("discovered_tools", [])
+        )
 
     tools = select_tool_schemas(
-        query=query,
+        query=routing_query,
         schemas=ALL_TOOLS,
         limit=12,
         task_active=task_active,
+        pinned_tools=pinned,
     )
 
     if session.task is not None:
@@ -439,9 +476,11 @@ def _tools_for_reasoning(session, query, task_active):
         ]
 
         session.task["selected_tools"] = names
+
         session.task["tool_router_history"].append({
-            "query": str(query)[:1000],
+            "query": routing_query[:2000],
             "selected": names,
+            "pinned": pinned,
             "total_available": len(ALL_TOOLS),
         })
 
@@ -563,6 +602,48 @@ def ask(message, session_id=None):
                 )
 
                 # --------------------------------------------------------
+                # Capability discovery расширяет текущий tool context.
+                # Найденные tools pin'ятся до конца текущей задачи.
+                # --------------------------------------------------------
+
+                if (
+                    task_active
+                    and session.task
+                    and function_name == "discover_capability"
+                    and result.get("success")
+                ):
+                    data = result.get("data") or {}
+                    found = data.get("tools") or []
+
+                    names = []
+
+                    for item in found:
+                        if isinstance(item, dict):
+                            name = item.get("name")
+                        else:
+                            name = item
+
+                        if name and name not in names:
+                            names.append(name)
+
+                    for name in names:
+                        if name not in session.task["discovered_tools"]:
+                            session.task["discovered_tools"].append(name)
+
+                    session.task["discovered_tools"] = (
+                        session.task["discovered_tools"][-20:]
+                    )
+
+                    session.task["discovery_history"].append({
+                        "query": data.get("query"),
+                        "tools": names,
+                    })
+
+                    session.task["discovery_history"] = (
+                        session.task["discovery_history"][-10:]
+                    )
+
+                # --------------------------------------------------------
                 # План является частью execution state.
                 # Capability только валидирует операцию, а Brain применяет
                 # её к текущей Session.
@@ -639,6 +720,10 @@ def ask(message, session_id=None):
                     "recovery_count": task.get("recovery_count", 0),
                     "goal_status": task.get("goal_status", "in_progress"),
                     "last_result": task.get("last_result"),
+                    "discovered_tools": task.get(
+                        "discovered_tools",
+                        [],
+                    ),
                 }
 
                 result_text += (

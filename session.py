@@ -50,6 +50,11 @@ class Session:
             "selected_tools": [],
             "tool_router_history": [],
 
+            # Capabilities, найденные через полный registry.
+            # Они остаются доступными следующим reasoning-итерациям.
+            "discovered_tools": [],
+            "discovery_history": [],
+
             "started_at": datetime.now().isoformat(timespec="seconds"),
         }
 
