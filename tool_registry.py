@@ -550,3 +550,95 @@ def get_tool_implementation(name):
 
 def get_default_tool_permissions():
     return {tool.name: tool.permission_policy for tool in TOOL_REGISTRY}
+
+# === AKIRA BROWSER 2.0 TOOLS ===
+#
+# Browser is a separate capability layer.
+# Existing application-specific tools remain untouched.
+
+TOOL_REGISTRY = TOOL_REGISTRY + (
+    ToolDefinition(
+        "browser_start",
+        "Запускает отдельную Chrome-сессию Akira с Chrome DevTools Protocol.",
+        _parameters({}),
+        "capabilities.browser",
+        "browser_start",
+        "auto",
+    ),
+    ToolDefinition(
+        "browser_tabs",
+        "Показывает вкладки в Chrome-сессии Akira.",
+        _parameters({}),
+        "capabilities.browser",
+        "browser_tabs",
+        "auto",
+    ),
+    ToolDefinition(
+        "browser_current",
+        "Возвращает текущую вкладку Chrome-сессии Akira.",
+        _parameters({}),
+        "capabilities.browser",
+        "browser_current",
+        "auto",
+    ),
+    ToolDefinition(
+        "browser_navigate",
+        "Переходит на URL в Chrome через CDP.",
+        _parameters({
+            "url": {
+                "type": "string",
+                "description": "URL страницы.",
+            },
+            "tab_id": {
+                "type": "string",
+                "description": "ID вкладки. Если не указан — текущая вкладка.",
+            },
+        }, ["url"]),
+        "capabilities.browser",
+        "browser_navigate",
+        "auto",
+    ),
+    ToolDefinition(
+        "browser_back",
+        "Возвращает выбранную вкладку Chrome назад по истории.",
+        _parameters({
+            "tab_id": {
+                "type": "string",
+                "description": "ID вкладки.",
+            },
+        }),
+        "capabilities.browser",
+        "browser_back",
+        "auto",
+    ),
+    ToolDefinition(
+        "browser_reload",
+        "Перезагружает выбранную вкладку Chrome.",
+        _parameters({
+            "tab_id": {
+                "type": "string",
+                "description": "ID вкладки.",
+            },
+        }),
+        "capabilities.browser",
+        "browser_reload",
+        "auto",
+    ),
+    ToolDefinition(
+        "browser_execute",
+        "Выполняет JavaScript в DOM выбранной вкладки Chrome. Используй для чтения или управления DOM, когда browser/GUI-маршрут подходит лучше.",
+        _parameters({
+            "expression": {
+                "type": "string",
+                "description": "JavaScript expression.",
+            },
+            "tab_id": {
+                "type": "string",
+                "description": "ID вкладки.",
+            },
+        }, ["expression"]),
+        "capabilities.browser",
+        "browser_execute",
+        "auto",
+    ),
+)
