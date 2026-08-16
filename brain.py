@@ -740,6 +740,7 @@ def ask(message, session_id=None):
     task_began_here = False
     last_tool_action = None
     stop_reason = None
+    no_tool_streak = 0
 
     for _ in range(MAX_TOOL_ITERATIONS):
         active_tools = _tools_for_reasoning(
@@ -752,23 +753,23 @@ def ask(message, session_id=None):
             model=MODEL,
             messages=messages,
             tools=active_tools,
-            # Once computer-use has started, every reasoning turn must
-            # produce an executable tool call. Plain text is not progress.
-            tool_choice=(
-                "required"
-                if task_active
-                else "auto"
-            ),
+            tool_choice="auto",
         )
 
         assistant_message = response.choices[0].message
 
         if not assistant_message.tool_calls:
-            # Во время активной computer-use задачи обычный текст модели
-            # НЕ является завершением задачи. Завершение допускается только
-            # через finish_task после фактической проверки результата.
             if task_active:
+                no_tool_streak += 1
                 assistant_content = assistant_message.content or ""
+
+                if no_tool_streak >= 3:
+                    answer = assistant_content or (
+                        "Задача остановлена: reasoning не вернул "
+                        "исполняемое действие."
+                    )
+                    stop_reason = "no_tool_progress"
+                    break
 
                 messages.append({
                     "role": "assistant",
@@ -778,12 +779,13 @@ def ask(message, session_id=None):
                 messages.append({
                     "role": "system",
                     "content": (
-                        "Задача всё ещё активна. Обычный текстовый ответ "
-                        "не завершает computer-use задачу. Продолжай "
-                        "выполнение через доступные tools. Если действие "
-                        "изменило состояние — сначала observe. После "
-                        "фактической проверки результата используй "
-                        "verify_goal, а завершай только через finish_task."
+                        "Задача всё ещё активна. Текстовый ответ не "
+                        "является действием и не завершает задачу. "
+                        "Продолжай выполнение через доступный tool. "
+                        "После observe выбери следующее необходимое "
+                        "действие (например type или click), а после "
+                        "изменения состояния снова используй observe. "
+                        "Завершай только через verify_goal и finish_task."
                     ),
                 })
 
@@ -792,6 +794,7 @@ def ask(message, session_id=None):
             answer = assistant_message.content or ""
             break
 
+        no_tool_streak = 0
         assistant_turn = _assistant_tool_message(assistant_message)
         messages.append(assistant_turn)
         turn_messages.append(assistant_turn)
