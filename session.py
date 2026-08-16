@@ -46,6 +46,10 @@ class Session:
             "goal_status": "in_progress",
             "goal_evidence": None,
 
+            # Tool router state.
+            "selected_tools": [],
+            "tool_router_history": [],
+
             "started_at": datetime.now().isoformat(timespec="seconds"),
         }
 
