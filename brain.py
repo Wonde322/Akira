@@ -657,6 +657,15 @@ def _tools_for_reasoning(session, query, task_active):
             if tool_name not in pinned:
                 pinned.append(tool_name)
 
+        # During an active computer-use task keep the complete universal
+        # computer action surface available on every reasoning iteration.
+        # This prevents unrelated tools such as shell from replacing the
+        # browser/GUI route after an observation.
+        if task_active:
+            for tool_name in COMPUTER_USE_TOOLS:
+                if tool_name not in pinned:
+                    pinned.append(tool_name)
+
     tools = select_tool_schemas(
         query=routing_query,
         schemas=ALL_TOOLS,
