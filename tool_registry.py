@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from importlib import import_module
 
+from skills.loader import load_skill_tools
+
 
 PERMISSION_LEVELS = {"auto", "confirm", "blocked"}
 
@@ -329,6 +331,25 @@ TOOL_REGISTRY = (
         "capabilities.task", "finish_task", "auto",
     ),
 )
+
+
+
+# ------------------------------------------------------------
+# External skills
+# ------------------------------------------------------------
+#
+# Core tools stay declarative and local to this file.
+# Skills extend the registry without requiring changes to brain.py.
+#
+# A broken optional skill is ignored rather than preventing Akira from
+# starting. The error can be inspected through get_skill_load_errors().
+#
+SKILL_TOOLS, SKILL_LOAD_ERRORS = load_skill_tools()
+TOOL_REGISTRY = tuple(TOOL_REGISTRY) + tuple(SKILL_TOOLS)
+
+
+def get_skill_load_errors():
+    return list(SKILL_LOAD_ERRORS)
 
 
 def _validate_registry():
