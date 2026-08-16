@@ -749,6 +749,31 @@ def ask(message, session_id=None):
         assistant_message = response.choices[0].message
 
         if not assistant_message.tool_calls:
+            # Во время активной computer-use задачи обычный текст модели
+            # НЕ является завершением задачи. Завершение допускается только
+            # через finish_task после фактической проверки результата.
+            if task_active:
+                assistant_content = assistant_message.content or ""
+
+                messages.append({
+                    "role": "assistant",
+                    "content": assistant_content,
+                })
+
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        "Задача всё ещё активна. Обычный текстовый ответ "
+                        "не завершает computer-use задачу. Продолжай "
+                        "выполнение через доступные tools. Если действие "
+                        "изменило состояние — сначала observe. После "
+                        "фактической проверки результата используй "
+                        "verify_goal, а завершай только через finish_task."
+                    ),
+                })
+
+                continue
+
             answer = assistant_message.content or ""
             break
 
