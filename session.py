@@ -45,6 +45,12 @@ class Session:
             # Последняя оценка состояния цели.
             "goal_status": "in_progress",
             "goal_evidence": None,
+            "goal_verification": {
+                "status": "unverified",
+                "evidence": None,
+                "observation_step": None,
+                "verified_at": None,
+            },
 
             # Tool router state.
             "selected_tools": [],
@@ -171,6 +177,49 @@ class Session:
 
         self.task["goal_status"] = status
         self.task["goal_evidence"] = str(evidence or "")[:2000]
+
+    def set_goal_verification(self, status, evidence=None):
+        """Stores terminal verification state for the current task."""
+        if self.task is None:
+            return
+
+        task = self.task
+        normalized = str(status or "unverified").strip().lower()
+
+        task["goal_verification"] = {
+            "status": normalized,
+            "evidence": str(evidence or "")[:2000],
+            "observation_step": task.get("step"),
+            "verified_at": (
+                datetime.now().isoformat(timespec="seconds")
+                if normalized == "verified"
+                else None
+            ),
+        }
+
+        if normalized == "verified":
+            task["goal_status"] = "verified"
+            task["goal_evidence"] = str(evidence or "")[:2000]
+        elif normalized == "failed":
+            task["goal_status"] = "failed"
+            task["goal_evidence"] = str(evidence or "")[:2000]
+        else:
+            task["goal_status"] = "in_progress"
+            task["goal_evidence"] = str(evidence or "")[:2000]
+
+    def goal_is_verified(self):
+        if self.task is None:
+            return False
+
+        verification = self.task.get(
+            "goal_verification",
+            {},
+        )
+
+        return (
+            verification.get("status") == "verified"
+            and verification.get("observation_step") == self.task.get("step")
+        )
 
 
     def register_observation(self, observation):

@@ -391,6 +391,27 @@ TOOL_REGISTRY = (
         "capabilities.gui", "drag", "auto",
     ),
     ToolDefinition(
+        "verify_goal",
+        "Проверяет, достигнута ли цель текущей задачи после свежего observe. "
+        "Используй verified только когда фактическое состояние подтверждает цель. "
+        "Используй uncertain, если доказательств недостаточно, и failed если "
+        "цель явно не достигнута.",
+        _parameters({
+            "status": {
+                "type": "string",
+                "enum": ["verified", "failed", "uncertain"],
+                "description": "Статус проверки цели.",
+            },
+            "evidence": {
+                "type": "string",
+                "description": "Конкретное фактическое evidence из последнего состояния.",
+            },
+        }, ["status", "evidence"]),
+        "capabilities.task",
+        "verify_goal",
+        "auto",
+    ),
+    ToolDefinition(
         "finish_task",
         "Завершает задачу computer-use и сообщает итог. Вызывай, когда цель достигнута, экран соответствует ожиданию или дальше действовать невозможно.",
         _parameters({"result": {"type": "string", "description": "Итог/статус завершения задачи."}}, ["result"]),

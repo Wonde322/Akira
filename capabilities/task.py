@@ -91,3 +91,44 @@ def fail_plan_step(reason=""):
         },
         "output": "Текущий шаг отмечен как не выполненный.",
     }
+
+
+def verify_goal(status, evidence=""):
+    """Validate the agent's explicit goal verification decision.
+
+    The capability itself does not inspect the world. Brain owns the task
+    state and only accepts a verified state when fresh evidence exists.
+    """
+
+    normalized = str(status or "").strip().lower()
+
+    if normalized not in {"verified", "failed", "uncertain"}:
+        return {
+            "success": False,
+            "error": "invalid_verification_status",
+            "output": (
+                "status должен быть verified, failed или uncertain."
+            ),
+        }
+
+    evidence = str(evidence or "").strip()
+
+    if not evidence:
+        return {
+            "success": False,
+            "error": "verification_evidence_required",
+            "output": "Для проверки цели необходимо указать evidence.",
+        }
+
+    return {
+        "success": True,
+        "data": {
+            "status": normalized,
+            "evidence": evidence[:2000],
+        },
+        "output": (
+            "Цель отмечена как "
+            + normalized
+            + "."
+        ),
+    }

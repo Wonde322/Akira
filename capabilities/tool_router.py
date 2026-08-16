@@ -207,6 +207,7 @@ def _always_include(task_active):
     base = {
         "finish_task",
         "discover_capability",
+        "verify_goal",
     }
 
     if task_active:

@@ -121,13 +121,18 @@ success=True: проверяй фактическое состояние.
 Сначала проверь фактический результат. Если результат не достиг цели шага —
 используй fail_plan_step и перестрой маршрут через update_task_plan.
 
-Когда цель достигнута или дальше действовать невозможно, вызови finish_task.
+Когда цель достигнута, сначала используй verify_goal со статусом
+verified и конкретным evidence из свежего observe. Только после успешной
+verification вызывай finish_task.
+
+Если цель не достигнута — используй verify_goal со статусом failed или uncertain,
+измени маршрут и продолжай. finish_task не является способом сообщить о
+предполагаемом успехе: он разрешён только после актуальной verification.
 
 ВАЖНО: не объявляй задачу выполненной и не вызывай finish_task, пока не
-проверишь результат последнего действия свежим observe. Если действие изменило
-состояние (open, click, type и т.п.) — сначала observe, убедись, что результат
-реально достигнут, и только потом finish_task. Если что-то пошло не так, попробуй
-исправить действие, а не завершай задачу с утверждением об успехе.
+проверишь результат последнего действия свежим observe и не зафиксируешь
+verified через verify_goal. Если действие изменило состояние (open, click,
+type и т.п.), старая verification автоматически становится недействительной.
 После ошибки инструмента используй её результат как информацию для следующего
 шага. Не повторяй вслепую то же самое действие: измени параметры, маршрут или
 способ выполнения. Если GUI-способ не работает, используй другой доступный
@@ -443,6 +448,7 @@ def _tools_for_reasoning(session, query, task_active):
             "last_action": task.get("last_action"),
             "last_result": task.get("last_result"),
             "failed_actions": task.get("failed_actions", [])[-3:],
+            "goal_verification": task.get("goal_verification"),
         }
 
         routing_query += (
@@ -560,22 +566,70 @@ def ask(message, session_id=None):
                 task_began_here = True
 
             if function_name == "finish_task":
+
+                # Сначала всегда получаем свежий observe после последнего
+                # state-changing действия.
                 if pending_observe:
-                    # Нельзя завершать задачу, не убедившись в результате
-                    # последнего действия: сначала свежий observe, затем
-                    # модель сама решит, завершать ли.
-                    _inject_observation(session, messages, turn_messages, source)
+                    _inject_observation(
+                        session,
+                        messages,
+                        turn_messages,
+                        source,
+                    )
                     observed_this_turn = True
                     pending_observe = False
+                    continue
+
+                # Одного observe недостаточно: модель должна явно
+                # сопоставить фактическое состояние с целью через
+                # verify_goal.
+                if (
+                    task_active
+                    and session.task
+                    and not session.goal_is_verified()
+                ):
+                    result = {
+                        "success": False,
+                        "error": "goal_not_verified",
+                        "output": (
+                            "Нельзя завершить задачу: цель не прошла "
+                            "semantic verification. Используй verify_goal "
+                            "после анализа свежего observe."
+                        ),
+                    }
+
+                    record_tool_execution(
+                        "finish_task",
+                        {},
+                        result,
+                        "auto",
+                        source=source,
+                        **_task_kwargs(session, "finish_task"),
+                    )
+
+                    tool_message = {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": _tool_result_text(result),
+                    }
+
+                    messages.append(tool_message)
+                    turn_messages.append(tool_message)
                     continue
 
                 arguments, parse_error = _parse_arguments(tool_call)
 
                 if parse_error:
-                    result = _invalid_arguments_result(function_name, parse_error)
+                    result = _invalid_arguments_result(
+                        function_name,
+                        parse_error,
+                    )
                 else:
                     result = _execute_and_audit(
-                        function_name, arguments, source=source, session=session
+                        function_name,
+                        arguments,
+                        source=source,
+                        session=session,
                     )
 
                 answer = _finish_answer(result)
@@ -650,6 +704,28 @@ def ask(message, session_id=None):
                 # --------------------------------------------------------
 
                 if task_active and session.task:
+
+                    if (
+                        function_name == "verify_goal"
+                        and result.get("success")
+                    ):
+                        data = result.get("data") or {}
+
+                        # Verification допустима только если уже есть
+                        # фактическое наблюдение.
+                        if session.task.get("last_observation") is not None:
+                            session.set_goal_verification(
+                                data.get("status"),
+                                data.get("evidence") or "",
+                            )
+                        else:
+                            result = {
+                                "success": False,
+                                "error": "verification_without_observation",
+                                "output": (
+                                    "Сначала нужен observe, затем verify_goal."
+                                ),
+                            }
 
                     if function_name in ("plan_task", "update_task_plan"):
                         if result.get("success"):
@@ -751,6 +827,14 @@ def ask(message, session_id=None):
                 any_state_change = True
                 pending_observe = True
                 session.register_action(function_name, arguments)
+
+                # Любое изменение состояния инвалидирует старую
+                # semantic verification.
+                if session.task is not None:
+                    session.set_goal_verification(
+                        "unverified",
+                        "Состояние изменилось после предыдущей проверки.",
+                    )
 
             if task_active and result.get("error") in ("denied", "blocked"):
                 stop_reason = "permission"
