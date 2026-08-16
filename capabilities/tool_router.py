@@ -1,3 +1,4 @@
+from capability_layer import CAPABILITIES
 """Lightweight relevance router for Akira tools.
 
 No external dependencies.
@@ -175,30 +176,162 @@ def _group_hits(query_tokens, tool_name):
 
 
 def _score(query, schema):
-    function = schema.get("function", {})
-    name = str(function.get("name", ""))
+    """Score a tool against the current reasoning query.
 
-    query_tokens = _tokens(query)
-    tool_tokens = _tokens(_schema_text(schema))
+    Existing lexical scoring remains the primary mechanism.
 
-    if not query_tokens or not tool_tokens:
-        return 0.0
+    Capability semantics add a bounded boost when a concrete
+    tool represents a universal operation such as:
 
-    overlap = query_tokens & tool_tokens
+        open
+        click
+        type
+        observe
+        read
+        write
+        move
+        rename
+        scroll
+        verify
+        execute
 
-    # Base lexical relevance.
-    score = len(overlap) * 1.0
+    The capability layer is the source of truth for these
+    semantic relationships.
+    """
 
-    # Exact tool-name token matches are much stronger.
-    name_tokens = _tokens(name)
-    score += len(query_tokens & name_tokens) * 4.0
+    import math
+    import re
 
-    # Group relevance gives universal tools a boost.
-    score += _group_hits(query_tokens, name) * 0.75
+    query_text = str(
+        query or ""
+    ).lower()
 
-    # Slightly reward longer overlap because descriptions are richer.
+    function = (
+        schema.get(
+            "function",
+            {}
+        )
+        if isinstance(
+            schema,
+            dict,
+        )
+        else {}
+    )
+
+    name = str(
+        function.get(
+            "name",
+            "",
+        )
+    ).lower()
+
+    description = str(
+        function.get(
+            "description",
+            "",
+        )
+    ).lower()
+
+    # --------------------------------------------------------
+    # Existing lexical scoring.
+    # --------------------------------------------------------
+
+    query_tokens = set(
+        re.findall(
+            r"[a-zA-Zа-яА-Я0-9_]+",
+            query_text,
+        )
+    )
+
+    searchable = (
+        name
+        + " "
+        + description
+    )
+
+    schema_tokens = set(
+        re.findall(
+            r"[a-zA-Zа-яА-Я0-9_]+",
+            searchable,
+        )
+    )
+
+    overlap = (
+        query_tokens
+        & schema_tokens
+    )
+
+    score = 0.0
+
     if overlap:
-        score += math.log1p(len(overlap))
+
+        score += math.log1p(
+            len(overlap)
+        )
+
+    # Direct function-name match remains stronger.
+    if name in query_tokens:
+
+        score += 2.0
+
+    # --------------------------------------------------------
+    # Semantic capability scoring.
+    #
+    # IMPORTANT:
+    # CAPABILITIES is imported from the actual universal
+    # capability layer. No duplicate registry is created here.
+    # --------------------------------------------------------
+
+    semantic_terms = set()
+
+    for capability in CAPABILITIES:
+
+        try:
+
+            if capability.tool.lower() != name:
+                continue
+
+            semantic_terms.add(
+                capability.operation.lower()
+            )
+
+            semantic_terms.add(
+                capability.name.lower()
+            )
+
+        except Exception:
+            continue
+
+    # --------------------------------------------------------
+    # Capability operation can itself be multi-word in future.
+    # Tokenize it rather than requiring exact phrase equality.
+    # --------------------------------------------------------
+
+    semantic_tokens = set()
+
+    for term in semantic_terms:
+
+        semantic_tokens.update(
+            re.findall(
+                r"[a-zA-Zа-яА-Я0-9_]+",
+                term,
+            )
+        )
+
+    semantic_overlap = (
+        query_tokens
+        & semantic_tokens
+    )
+
+    if semantic_overlap:
+
+        # Bounded semantic boost.
+        #
+        # It is deliberately smaller than an exact tool-name
+        # match, so we don't destroy existing router behaviour.
+        score += 0.75 * math.log1p(
+            len(semantic_overlap)
+        )
 
     return score
 
