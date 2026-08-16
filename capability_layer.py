@@ -268,6 +268,26 @@ CAPABILITIES = (
         "browser_current",
         10,
     ),
+
+    # Browser click is implemented through the
+    # existing browser DOM adapter.
+    Capability(
+        "browser_click",
+        "click",
+        "browser",
+        "browser_click",
+        10,
+    ),
+
+    # Browser type is implemented through the
+    # existing browser DOM adapter.
+    Capability(
+        "browser_type",
+        "type",
+        "browser",
+        "browser_type",
+        10,
+    ),
 )
 
 

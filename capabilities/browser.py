@@ -682,3 +682,77 @@ def browser_execute(
             default=str,
         ),
     }
+
+
+# ============================================================
+# AKIRA BROWSER CAPABILITY ADAPTERS
+# ============================================================
+
+def browser_click(selector, tab_id=None):
+    """Click a DOM element in the selected browser tab."""
+
+    if not selector:
+        return {
+            "success": False,
+            "error": "selector_required",
+            "output": "Не указан selector.",
+        }
+
+    expression = (
+        "(function(){"
+        "const el=document.querySelector("
+        + repr(selector)
+        + ");"
+        "if(!el){"
+        "return {success:false,error:'element_not_found'};"
+        "}"
+        "el.click();"
+        "return {success:true};"
+        "})()"
+    )
+
+    return browser_execute(
+        expression,
+        tab_id=tab_id,
+    )
+
+
+def browser_type(selector, text, tab_id=None):
+    """Type text into a DOM input/textarea/contenteditable element."""
+
+    if not selector:
+        return {
+            "success": False,
+            "error": "selector_required",
+            "output": "Не указан selector.",
+        }
+
+    expression = (
+        "(function(){"
+        "const el=document.querySelector("
+        + repr(selector)
+        + ");"
+        "if(!el){"
+        "return {success:false,error:'element_not_found'};"
+        "}"
+        "el.focus();"
+        "if('value' in el){"
+        "el.value="
+        + repr(text)
+        + ";"
+        "el.dispatchEvent(new Event('input',{bubbles:true}));"
+        "el.dispatchEvent(new Event('change',{bubbles:true}));"
+        "}"
+        "else{"
+        "el.textContent="
+        + repr(text)
+        + ";"
+        "}"
+        "return {success:true};"
+        "})()"
+    )
+
+    return browser_execute(
+        expression,
+        tab_id=tab_id,
+    )

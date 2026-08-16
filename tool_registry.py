@@ -842,3 +842,88 @@ TOOL_REGISTRY = TOOL_REGISTRY + (
         "confirm",
     ),
 )
+
+# === AKIRA UNIVERSAL CAPABILITY LAYER ===
+#
+# These tools expose semantic capabilities to the agent.
+# Concrete GUI/browser/filesystem tools remain available underneath.
+
+TOOL_REGISTRY = TOOL_REGISTRY + (
+    ToolDefinition(
+        "capability_resolve",
+        "Разрешает универсальную операцию Akira в конкретный лучший инструмент. Например click -> browser_click или click.",
+        _parameters({
+            "operation": {
+                "type": "string",
+                "description": "Семантическая операция: observe/open/close/find/create/read/write/move/copy/rename/delete/select/click/type/key/scroll/drag/wait/verify/execute.",
+            },
+            "modality": {
+                "type": "string",
+                "description": "Необязательная модальность: desktop/browser/filesystem/shell.",
+            },
+        }, ["operation"]),
+        "capability_layer",
+        "resolve_capability",
+        "auto",
+    ),
+    ToolDefinition(
+        "capability_snapshot",
+        "Показывает, какие универсальные capabilities сейчас доступны Akira и какими concrete tools они реализованы.",
+        _parameters({}),
+        "capability_layer",
+        "capability_snapshot",
+        "auto",
+    ),
+)
+
+
+# ============================================================
+# AKIRA BROWSER CAPABILITY ADAPTERS
+#
+# IMPORTANT:
+# This block is intentionally at the END of tool_registry.py.
+# TOOL_REGISTRY is assembled in several stages above.
+# Browser adapters must be appended after the FINAL assignment
+# so they cannot be overwritten by a later registry rebuild.
+# ============================================================
+
+TOOL_REGISTRY = TOOL_REGISTRY + (
+    ToolDefinition(
+        "browser_click",
+        "Нажимает DOM-элемент в выбранной вкладке Chrome.",
+        _parameters({
+            "selector": {
+                "type": "string",
+                "description": "CSS selector элемента.",
+            },
+            "tab_id": {
+                "type": "string",
+                "description": "ID вкладки. Необязателен.",
+            },
+        }, ["selector"]),
+        "capabilities.browser",
+        "browser_click",
+        "auto",
+    ),
+    ToolDefinition(
+        "browser_type",
+        "Вводит текст в DOM input, textarea или contenteditable.",
+        _parameters({
+            "selector": {
+                "type": "string",
+                "description": "CSS selector поля.",
+            },
+            "text": {
+                "type": "string",
+                "description": "Текст для ввода.",
+            },
+            "tab_id": {
+                "type": "string",
+                "description": "ID вкладки. Необязателен.",
+            },
+        }, ["selector", "text"]),
+        "capabilities.browser",
+        "browser_type",
+        "auto",
+    ),
+)
