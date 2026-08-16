@@ -141,3 +141,13 @@ def create_groq_client():
                 _client = Groq(api_key=_get_groq_api_key())
 
     return _client
+
+# Background autonomous task runtime.
+BACKGROUND_TASK_MAX_CONCURRENT = 3
+BACKGROUND_TASK_MAX_STORED = 100
+BACKGROUND_TASK_DIR = PROJECT_ROOT / "runtime" / "tasks"
+BACKGROUND_TASK_FILE = (
+    PROJECT_ROOT
+    / "runtime"
+    / "background_tasks.json"
+)

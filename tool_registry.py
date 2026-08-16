@@ -642,3 +642,63 @@ TOOL_REGISTRY = TOOL_REGISTRY + (
         "auto",
     ),
 )
+
+# === AKIRA BACKGROUND TASK RUNTIME ===
+#
+# Background tasks run through the same brain/tool/permission
+# architecture as foreground requests.
+
+TOOL_REGISTRY = TOOL_REGISTRY + (
+    ToolDefinition(
+        "background_task_start",
+        "Запускает автономную задачу Akira в фоне. Используй, когда задача может выполняться независимо от текущего диалога и пользователь не должен ждать её завершения.",
+        _parameters({
+            "goal": {
+                "type": "string",
+                "description": "Полная цель фоновой задачи.",
+            },
+        }, ["goal"]),
+        "task_runtime",
+        "background_task_start",
+        "auto",
+    ),
+    ToolDefinition(
+        "background_task_status",
+        "Показывает состояние конкретной фоновой задачи.",
+        _parameters({
+            "task_id": {
+                "type": "string",
+                "description": "ID фоновой задачи.",
+            },
+        }, ["task_id"]),
+        "task_runtime",
+        "background_task_status",
+        "auto",
+    ),
+    ToolDefinition(
+        "background_tasks",
+        "Показывает последние фоновые задачи Akira.",
+        _parameters({
+            "limit": {
+                "type": "integer",
+                "description": "Количество задач, максимум 50.",
+            },
+        }),
+        "task_runtime",
+        "background_tasks",
+        "auto",
+    ),
+    ToolDefinition(
+        "background_task_result",
+        "Возвращает результат фоновой задачи, если она уже завершилась.",
+        _parameters({
+            "task_id": {
+                "type": "string",
+                "description": "ID фоновой задачи.",
+            },
+        }, ["task_id"]),
+        "task_runtime",
+        "background_task_result",
+        "auto",
+    ),
+)
