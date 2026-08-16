@@ -31,6 +31,7 @@ from memory import build_memory_context
 from permissions import get_permission, request_confirmation
 from session import Session
 from tool_registry import get_tool_implementation, get_tool_schemas
+from capability_layer import resolve_capability
 
 
 client = None
@@ -219,46 +220,207 @@ def _tool_result(success, error, output):
 
 
 def _execute(function_name, arguments):
-    """Выполняет инструмент, возвращает (result, permission_decision)."""
-    permission = get_permission(function_name)
+    """Выполняет инструмент и возвращает (result, permission_decision).
+
+    Concrete registered tools are always preferred.
+    Semantic capability names fall back through capability_layer.
+    """
+
+    # --------------------------------------------------------
+    # Resolve concrete tool first.
+    # --------------------------------------------------------
+
+    function = get_tool_implementation(
+        function_name
+    )
+
+    resolved_name = function_name
+    capability_resolution = None
+
+    # --------------------------------------------------------
+    # Semantic capability fallback.
+    # --------------------------------------------------------
+
+    if function is None:
+
+        capability_resolution = (
+            resolve_capability(
+                function_name
+            )
+        )
+
+        if capability_resolution.get(
+            "success"
+        ):
+
+            resolved_name = (
+                capability_resolution["tool"]
+            )
+
+            function = (
+                get_tool_implementation(
+                    resolved_name
+                )
+            )
+
+    # --------------------------------------------------------
+    # Permission belongs to the resolved concrete tool.
+    # --------------------------------------------------------
+
+    permission = get_permission(
+        resolved_name
+    )
 
     if permission == "blocked":
-        return _tool_result(
-            False,
+
+        return (
+            _tool_result(
+                False,
+                "blocked",
+                "Инструмент заблокирован настройками разрешений.",
+            ),
             "blocked",
-            "Инструмент заблокирован настройками разрешений.",
-        ), "blocked"
+        )
 
     if permission == "confirm":
-        if not request_confirmation(function_name, arguments):
-            return _tool_result(
-                False,
+
+        if not request_confirmation(
+            resolved_name,
+            arguments,
+        ):
+
+            return (
+                _tool_result(
+                    False,
+                    "denied",
+                    "Пользователь не разрешил выполнение действия.",
+                ),
                 "denied",
-                "Пользователь не разрешил выполнение действия.",
-            ), "denied"
+            )
 
         decision = "confirmed"
+
     else:
         decision = "auto"
 
-    function = get_tool_implementation(function_name)
+    # --------------------------------------------------------
+    # Unknown tool.
+    # --------------------------------------------------------
 
     if function is None:
-        return _tool_result(False, "unknown", "Неизвестный инструмент."), decision
+
+        return (
+            _tool_result(
+                False,
+                "unknown",
+                "Неизвестный инструмент.",
+            ),
+            decision,
+        )
+
+    # --------------------------------------------------------
+    # Execute.
+    # --------------------------------------------------------
 
     try:
-        output = function(**arguments)
+
+        output = function(
+            **arguments
+        )
+
     except Exception as error:
-        return _tool_result(
-            False,
-            "error",
-            "Ошибка выполнения инструмента: " + str(error),
-        ), decision
+
+        return (
+            _tool_result(
+                False,
+                "error",
+                "Ошибка выполнения инструмента: "
+                + str(error),
+            ),
+            decision,
+        )
+
+    # --------------------------------------------------------
+    # Structured result.
+    # --------------------------------------------------------
 
     if is_structured(output):
+
+        if isinstance(
+            output,
+            dict,
+        ):
+
+            output.setdefault(
+                "requested_tool",
+                function_name,
+            )
+
+            output.setdefault(
+                "resolved_tool",
+                resolved_name,
+            )
+
+            if capability_resolution is not None:
+
+                output.setdefault(
+                    "capability",
+                    capability_resolution.get(
+                        "capability"
+                    ),
+                )
+
+                output.setdefault(
+                    "capability_modality",
+                    capability_resolution.get(
+                        "modality"
+                    ),
+                )
+
         return output, decision
 
-    return _tool_result(True, None, output), decision
+    # --------------------------------------------------------
+    # Legacy/plain result.
+    # --------------------------------------------------------
+
+    result = _tool_result(
+        True,
+        None,
+        output,
+    )
+
+    if isinstance(
+        result,
+        dict,
+    ):
+
+        result.setdefault(
+            "requested_tool",
+            function_name,
+        )
+
+        result.setdefault(
+            "resolved_tool",
+            resolved_name,
+        )
+
+        if capability_resolution is not None:
+
+            result.setdefault(
+                "capability",
+                capability_resolution.get(
+                    "capability"
+                ),
+            )
+
+            result.setdefault(
+                "capability_modality",
+                capability_resolution.get(
+                    "modality"
+                ),
+            )
+
+    return result, decision
 
 
 def _task_kwargs(session, action):
