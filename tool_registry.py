@@ -47,6 +47,30 @@ def _parameters(properties, required=None):
 
 TOOL_REGISTRY = (
     ToolDefinition(
+        "plan_task",
+        "Создаёт внутренний план выполнения сложной задачи.",
+        _parameters({
+            "steps": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Последовательность конкретных проверяемых шагов.",
+            },
+        }, ["steps"]),
+        "capabilities.task", "plan_task", "auto",
+    ),
+    ToolDefinition(
+        "update_task_plan",
+        "Перестраивает внутренний план после ошибки или изменения состояния.",
+        _parameters({
+            "steps": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Новый последовательный план.",
+            },
+        }, ["steps"]),
+        "capabilities.task", "update_task_plan", "auto",
+    ),
+    ToolDefinition(
         "open_youtube",
         "Открывает Google Chrome и выполняет поиск на YouTube. Используй, когда пользователь просит открыть или найти что-либо на YouTube.",
         _parameters({"query": {"type": "string", "description": "Что найти на YouTube."}}, ["query"]),
@@ -345,11 +369,41 @@ TOOL_REGISTRY = (
 # starting. The error can be inspected through get_skill_load_errors().
 #
 SKILL_TOOLS, SKILL_LOAD_ERRORS = load_skill_tools()
-TOOL_REGISTRY = tuple(TOOL_REGISTRY) + tuple(SKILL_TOOLS)
+
+# Skills являются расширениями, а не заменой core.
+# Если имя уже существует — core tool имеет приоритет.
+_core_names = {tool.name for tool in TOOL_REGISTRY}
+SKILL_COLLISIONS = []
+_SKILL_UNIQUE = []
+
+for _skill_tool in SKILL_TOOLS:
+    if _skill_tool.name in _core_names:
+        SKILL_COLLISIONS.append({
+            "name": _skill_tool.name,
+            "source": _skill_tool.implementation_module,
+            "reason": "core_tool_wins",
+        })
+        continue
+
+    if any(tool.name == _skill_tool.name for tool in _SKILL_UNIQUE):
+        SKILL_COLLISIONS.append({
+            "name": _skill_tool.name,
+            "source": _skill_tool.implementation_module,
+            "reason": "duplicate_skill",
+        })
+        continue
+
+    _SKILL_UNIQUE.append(_skill_tool)
+
+TOOL_REGISTRY = tuple(TOOL_REGISTRY) + tuple(_SKILL_UNIQUE)
 
 
 def get_skill_load_errors():
     return list(SKILL_LOAD_ERRORS)
+
+
+def get_skill_collisions():
+    return list(SKILL_COLLISIONS)
 
 
 def _validate_registry():

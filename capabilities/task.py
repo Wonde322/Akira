@@ -1,16 +1,32 @@
-"""Универсальный инструмент завершения задачи computer-use.
 
-finish_task — без side effects, policy auto: явный сигнал модели о том,
-что цель достигнута или дальше действовать нельзя. Brain перехватывает
-его в цикле и завершает задачу.
-"""
+"""Internal task planning capability for Akira."""
 
-from .protocol import fail, ok
+def plan_task(steps):
+    if not isinstance(steps, list):
+        return {
+            "success": False,
+            "error": "invalid_plan",
+            "output": "steps должен быть массивом строк.",
+        }
+
+    steps = [str(step).strip() for step in steps if str(step).strip()]
+
+    if not steps:
+        return {
+            "success": False,
+            "error": "empty_plan",
+            "output": "План пуст.",
+        }
+
+    return {
+        "success": True,
+        "data": {
+            "steps": steps[:20],
+            "count": min(len(steps), 20),
+        },
+        "output": "План создан.",
+    }
 
 
-def finish_task(result):
-    """Завершает компьютерную задачу с итогом."""
-    if not isinstance(result, str) or not result.strip():
-        return fail("invalid_result", "result должен быть непустой строкой.")
-
-    return ok({"finished": True, "result": result})
+def update_task_plan(steps):
+    return plan_task(steps)
