@@ -49,6 +49,7 @@ class AkiraDaemon:
         self._runtime = None
         self._scheduler = None
         self._event_bus = None
+        self._awareness = None
 
     # ========================================================
     # Lifecycle
@@ -69,10 +70,12 @@ class AkiraDaemon:
         from task_runtime import get_runtime
         from scheduler import get_scheduler
         from event_bus import get_event_bus
+        from awareness import get_awareness
 
         self._runtime = get_runtime()
         self._scheduler = get_scheduler()
         self._event_bus = get_event_bus()
+        self._awareness = get_awareness()
 
         self._started = True
 
@@ -141,6 +144,7 @@ class AkiraDaemon:
         self._maintain_runtime()
         self._tick_scheduler()
         self._maintain_event_bus()
+        self._sample_awareness()
 
     def _maintain_runtime(self):
         runtime = self._runtime
@@ -199,6 +203,26 @@ class AkiraDaemon:
         except Exception as error:
             print(
                 "[Akira daemon] event bus error:",
+                error,
+            )
+
+    def _sample_awareness(self):
+        awareness = self._awareness
+
+        if awareness is None:
+            return
+
+        try:
+            result = awareness.sample()
+
+            if result.get("changed"):
+                print(
+                    "[Akira daemon] desktop state changed."
+                )
+
+        except Exception as error:
+            print(
+                "[Akira daemon] awareness error:",
                 error,
             )
 

@@ -813,3 +813,32 @@ TOOL_REGISTRY = TOOL_REGISTRY + (
         "auto",
     ),
 )
+
+# === AKIRA DESKTOP AWARENESS ===
+#
+# Awareness is a local state sensor. It does not automatically
+# send screenshots to an LLM.
+
+TOOL_REGISTRY = TOOL_REGISTRY + (
+    ToolDefinition(
+        "awareness_state",
+        "Показывает текущее состояние desktop awareness: последний наблюдённый экран, frontmost app, количество наблюдений и изменений.",
+        _parameters({}),
+        "awareness",
+        "awareness_state",
+        "auto",
+    ),
+    ToolDefinition(
+        "awareness_enabled",
+        "Включает или отключает постоянное desktop awareness.",
+        _parameters({
+            "enabled": {
+                "type": "boolean",
+                "description": "Включить или отключить наблюдение за desktop.",
+            },
+        }, ["enabled"]),
+        "awareness",
+        "awareness_enabled",
+        "confirm",
+    ),
+)
