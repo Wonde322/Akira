@@ -1,16 +1,5 @@
+from format import format_duration
 from memory import get_activity_for_period
-
-
-def format_duration(seconds):
-    minutes = int(seconds // 60)
-
-    hours = minutes // 60
-    minutes = minutes % 60
-
-    if hours > 0:
-        return f"{hours} ч {minutes} мин"
-
-    return f"{minutes} мин"
 
 
 def get_activity_stats(days=1):

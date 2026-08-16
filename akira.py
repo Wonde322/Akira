@@ -11,7 +11,7 @@ while True:
         break
 
     try:
-        response = ask(command)
+        response = ask(command, session_id="cli")
         print("Акира: " + response)
 
     except Exception as error:

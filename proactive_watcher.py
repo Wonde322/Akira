@@ -2,7 +2,7 @@ import time
 import hashlib
 from datetime import datetime
 
-from proactive import check_proactive
+from analysis import check_proactive
 
 
 CHECK_INTERVAL = 60 * 60

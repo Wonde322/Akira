@@ -166,3 +166,47 @@ def test_atomic_save_preserves_existing_file_when_replace_fails(
 
     assert memory_path.read_text(encoding="utf-8") == original
     assert not list(tmp_path.glob(".memory-*.tmp"))
+
+
+def test_concurrent_memory_updates_do_not_lose_data(isolated_project, tmp_path):
+    import threading
+
+    memory = isolated_project("memory")
+
+    def add_event_worker(index):
+        memory.add_event(f"Событие {index}")
+
+    threads = [
+        threading.Thread(target=add_event_worker, args=(index,))
+        for index in range(20)
+    ]
+
+    for thread in threads:
+        thread.start()
+
+    for thread in threads:
+        thread.join()
+
+    stored = memory.load_memory()
+
+    assert len(stored["events"]) == 20
+    assert {event["text"] for event in stored["events"]} == {
+        f"Событие {index}" for index in range(20)
+    }
+
+
+def test_memory_file_path_is_absolute_and_project_root(monkeypatch, tmp_path):
+    import importlib
+    import sys
+    from pathlib import Path
+
+    sys.modules.pop("memory", None)
+    monkeypatch.chdir(tmp_path)
+
+    module = importlib.import_module("memory")
+
+    try:
+        assert Path(module.MEMORY_FILE).is_absolute()
+        assert Path(module.MEMORY_FILE).parent == Path(__file__).resolve().parents[1]
+    finally:
+        sys.modules.pop("memory", None)

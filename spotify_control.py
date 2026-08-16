@@ -1,15 +1,17 @@
 import ssl
 import certifi
 import json
-import os
 import subprocess
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 
+from config import SPOTIFY_TOKEN_FILE
+
+
 CLIENT_ID = "71886dbe05744e1c9ea56d7ffd1eec1c"
-TOKEN_FILE = os.path.expanduser("~/Akira/spotify_token.json")
+TOKEN_FILE = SPOTIFY_TOKEN_FILE
 
 API = "https://api.spotify.com/v1"
 TOKEN_URL = "https://accounts.spotify.com/api/token"

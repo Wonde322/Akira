@@ -4,14 +4,19 @@ import time
 import tempfile
 import collections
 import queue
+import threading
 
 import numpy as np
 import sounddevice as sd
 import soundfile as sf
 import webrtcvad
-from groq import Groq
 
 from brain import ask
+from config import create_groq_client
+from permissions import deny_all, set_confirmation_provider
+
+
+set_confirmation_provider(deny_all)
 
 
 SAMPLE_RATE = 16000
@@ -30,11 +35,22 @@ DIALOGUE_TIMEOUT = 8
 
 
 vad = webrtcvad.Vad(VAD_MODE)
-client = Groq(api_key=os.environ["GROQ_API_KEY"])
+client = None
+
+
+def _ensure_client():
+    global client
+
+    if client is None:
+        client = create_groq_client()
+
+    return client
 
 audio_queue = queue.Queue()
 
 speaking = False
+speak_proc = None
+_speak_lock = threading.Lock()
 
 
 WAKE_VARIANTS = {
@@ -48,6 +64,33 @@ WAKE_VARIANTS = {
     "акйра",
     "акирая",
 }
+
+# Известные whisper-галлюцинации на тишине/шуме. Такое никогда не должно
+# превращаться в пользовательское сообщение.
+_HALLUCINATIONS = (
+    "продолжение следует",
+    "если понадобится продолжить или есть вопросы",
+    "дай знать если понадобится продолжить",
+    "большое спасибо за просмотр",
+    "спасибо за просмотр",
+    "подпишись на канал",
+    "нажми подписаться",
+    "не забывайте подписываться",
+)
+
+
+def _is_hallucination(text):
+    """True, если текст похож на типичную whisper-галлюцинацию."""
+    if not text:
+        return False
+
+    normalized = text.lower().replace("ё", "е")
+
+    for phrase in _HALLUCINATIONS:
+        if phrase in normalized:
+            return True
+
+    return False
 
 
 def speak(text):
@@ -67,14 +110,33 @@ def speak(text):
     try:
         import subprocess
 
-        subprocess.run(
-            ["say", "-v", "Milena", text],
-            check=False,
+        from config import TTS_VOICE
+
+        proc = subprocess.Popen(
+            ["say", "-v", TTS_VOICE, text],
         )
+
+        with _speak_lock:
+            global speak_proc
+            speak_proc = proc
+
+        proc.wait()
+
+        with _speak_lock:
+            speak_proc = None
     finally:
         # После речи даём микрофону немного успокоиться.
         clear_audio_queue()
         speaking = False
+
+
+def stop_speaking():
+    """Прерывает текущую озвучку (если она идёт)."""
+    with _speak_lock:
+        proc = speak_proc
+
+    if proc is not None:
+        proc.terminate()
 
 
 def audio_callback(indata, frames, time_info, status):
@@ -107,7 +169,7 @@ def clear_audio_queue():
             break
 
 
-def record_utterance(timeout=None):
+def record_utterance(timeout=None, cancel_event=None):
     """
     Записывает одну полноценную фразу:
     начало речи → вся фраза → пауза.
@@ -127,6 +189,9 @@ def record_utterance(timeout=None):
     started_at = time.time()
 
     while True:
+
+        if cancel_event is not None and cancel_event.is_set():
+            return None
 
         if timeout is not None:
             if time.time() - started_at > timeout:
@@ -197,7 +262,7 @@ def transcribe(audio):
             "rb"
         ) as audio_file:
 
-            result = client.audio.transcriptions.create(
+            result = _ensure_client().audio.transcriptions.create(
                 file=(
                     filename,
                     audio_file.read()
@@ -216,6 +281,9 @@ def transcribe(audio):
             )
 
         text = (result.text or "").strip()
+
+        if _is_hallucination(text):
+            return ""
 
         # Отбрасываем явные галлюцинации/тишину.
         segments = getattr(result, "segments", None) or []
@@ -331,7 +399,7 @@ def process_command(command):
     print()
 
     try:
-        answer = ask(command)
+        answer = ask(command, session_id="voice")
 
         if answer:
             speak(answer)

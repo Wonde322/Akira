@@ -6,16 +6,31 @@ import pytest
 
 
 PROJECT_MODULES = {
+    "activity_stats",
     "analysis",
+    "audit",
     "brain",
-    "file_tools",
-    "goal_analysis",
+    "capabilities.apps",
+    "capabilities.backend",
+    "capabilities.filesystem",
+    "capabilities.gui",
+    "capabilities.key",
+    "capabilities.observe",
+    "capabilities.observation",
+    "capabilities.protocol",
+    "capabilities.shell",
+    "capabilities.task",
+    "capabilities.vision",
+    "capabilities.wait",
+    "config",
+    "format",
     "memory",
     "permissions",
-    "proactive",
+    "session",
     "spotify_control",
     "tool_registry",
     "tools",
+    "youtube",
 }
 
 
@@ -43,7 +58,21 @@ def isolated_project(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "groq", fake_groq)
 
     def load(module_name):
-        return importlib.import_module(module_name)
+        module = importlib.import_module(module_name)
+
+        permissions_module = sys.modules.get("permissions")
+        if permissions_module is not None:
+            permissions_module.PERMISSIONS_FILE = str(tmp_path / "permissions.json")
+
+        memory_module = sys.modules.get("memory")
+        if memory_module is not None:
+            memory_module.MEMORY_FILE = str(tmp_path / "memory.json")
+
+        audit_module = sys.modules.get("audit")
+        if audit_module is not None:
+            audit_module.AUDIT_FILE = str(tmp_path / "tool_audit.jsonl")
+
+        return module
 
     yield load
 

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "groq": {
+      "models": {
+        "openai/gpt-oss-20b": {
+          "limit": {
+            "context": 131072,
+            "output": 10000
+          }
+        }
+      }
+    }
+  }
+}

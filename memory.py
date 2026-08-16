@@ -1,12 +1,38 @@
+import contextlib
 import copy
+import fcntl
 import json
 import os
 import tempfile
+import threading
 from datetime import datetime, timedelta
 
+from config import MEMORY_FILE
 
-MEMORY_FILE = "memory.json"
+
 COLLECTION_FIELDS = ("goals", "tasks", "events", "activity")
+
+_process_lock = threading.RLock()
+
+
+@contextlib.contextmanager
+def _locked_memory():
+    """Serializes read-modify-write across threads and processes.
+
+    fcntl.flock guards concurrent processes; the in-process RLock guards
+    threads of the same process (flock is process-scoped on some platforms).
+    The lock lives on a separate, never-replaced file so os.replace-based
+    atomic writes cannot break mutual exclusion.
+    """
+    with _process_lock:
+        lock_path = MEMORY_FILE + ".lock"
+
+        with open(lock_path, "w") as lock_file:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
 
 
 class MemoryCorruptionError(RuntimeError):
@@ -125,9 +151,10 @@ def get_memory_snapshot():
 
 
 def _update_memory(update):
-    memory = load_memory()
-    update(memory)
-    save_memory(memory)
+    with _locked_memory():
+        memory = load_memory()
+        update(memory)
+        save_memory(memory)
 
 
 def add_goal(goal: str) -> str:
@@ -266,10 +293,6 @@ def add_activity_session(
         })
 
     _update_memory(update)
-
-
-def get_activity():
-    return copy.deepcopy(load_memory()["activity"])
 
 
 def get_activity_for_period(days: int = 1):

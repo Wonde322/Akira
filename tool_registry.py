@@ -48,37 +48,25 @@ TOOL_REGISTRY = (
         "open_youtube",
         "Открывает Google Chrome и выполняет поиск на YouTube. Используй, когда пользователь просит открыть или найти что-либо на YouTube.",
         _parameters({"query": {"type": "string", "description": "Что найти на YouTube."}}, ["query"]),
-        "brain", "open_youtube", "confirm",
+        "youtube", "open_youtube", "auto",
     ),
     ToolDefinition(
         "play_spotify",
         "Открывает поиск в установленном приложении Spotify. Используй, когда пользователь просит включить трек, исполнителя, альбом или музыку в Spotify.",
         _parameters({"query": {"type": "string", "description": "Название трека, исполнителя, альбома или музыки."}}, ["query"]),
-        "brain", "play_spotify", "confirm",
+        "spotify_control", "play", "auto",
     ),
     ToolDefinition(
         "check_proactive",
         "Проверяет цели, задачи и активность пользователя и определяет, есть ли важный повод обратить его внимание.",
         _parameters({"days": {"type": "integer", "description": "Количество последних дней для проверки."}}, ["days"]),
-        "proactive", "check_proactive", "confirm",
+        "analysis", "check_proactive", "confirm",
     ),
     ToolDefinition(
         "analyze_goals",
         "Сопоставляет цели, задачи и фактическую активность пользователя за указанный период.",
         _parameters({"days": {"type": "integer", "description": "Количество последних дней для анализа."}}, ["days"]),
-        "goal_analysis", "analyze_goals", "confirm",
-    ),
-    ToolDefinition(
-        "find_files",
-        "Ищет файлы в домашней папке пользователя по части имени.",
-        _parameters({"name": {"type": "string", "description": "Имя или часть имени файла."}}, ["name"]),
-        "file_tools", "find_files", "confirm",
-    ),
-    ToolDefinition(
-        "delete_file",
-        "Перемещает указанный файл в Корзину macOS.",
-        _parameters({"path": {"type": "string", "description": "Полный путь к файлу."}}, ["path"]),
-        "file_tools", "delete_file", "confirm",
+        "analysis", "analyze_goals", "confirm",
     ),
     ToolDefinition(
         "analyze_period",
@@ -87,22 +75,10 @@ TOOL_REGISTRY = (
         "analysis", "analyze_period", "auto",
     ),
     ToolDefinition(
-        "open_app",
-        "Открывает приложение на Mac.",
-        _parameters({"app_name": {"type": "string", "description": "Название приложения."}}, ["app_name"]),
-        "tools", "open_app", "auto",
-    ),
-    ToolDefinition(
-        "close_app",
-        "Закрывает приложение на Mac.",
-        _parameters({"app_name": {"type": "string", "description": "Название приложения."}}, ["app_name"]),
-        "tools", "close_app", "auto",
-    ),
-    ToolDefinition(
         "set_volume",
         "Устанавливает громкость Mac от 0 до 100.",
         _parameters({"level": {"type": "integer", "description": "Громкость от 0 до 100."}}, ["level"]),
-        "tools", "set_volume", "auto",
+        "tools", "set_volume", "confirm",
     ),
     ToolDefinition(
         "get_volume",
@@ -114,7 +90,7 @@ TOOL_REGISTRY = (
         "mute_volume",
         "Выключает звук Mac.",
         _parameters({}),
-        "tools", "mute_volume", "auto",
+        "tools", "mute_volume", "confirm",
     ),
     ToolDefinition(
         "get_running_apps",
@@ -166,6 +142,191 @@ TOOL_REGISTRY = (
         "Показывает последние события из истории пользователя.",
         _parameters({"limit": {"type": "integer", "description": "Количество последних событий."}}, ["limit"]),
         "memory", "get_recent_events", "auto",
+    ),
+    ToolDefinition(
+        "observe",
+        "Делает снимок экрана macOS и возвращает его путь, размеры экрана и размер файла. При interpret=True дополнительно отправляет снимок модели для описания происходящего. observe описывает состояние экрана, но не предлагает координаты для клика.",
+        _parameters({
+            "interpret": {"type": "boolean", "description": "True — отправить снимок модели для описания."},
+            "description_prompt": {"type": "string", "description": "Кастомная инструкция для интерпретации снимка."},
+        }),
+        "capabilities.observe", "observe", "auto",
+    ),
+    ToolDefinition(
+        "screen_size",
+        "Возвращает размеры основного экрана macOS.",
+        _parameters({}),
+        "capabilities.observe", "screen_size", "auto",
+    ),
+    ToolDefinition(
+        "open",
+        "Универсально открывает приложение, URL или файл на Mac: open(target='Google Chrome'), open(target='https://youtube.com'), open(target='/path').",
+        _parameters({"target": {"type": "string", "description": "Имя приложения, URL или абсолютный путь."}}, ["target"]),
+        "capabilities.apps", "open_target", "auto",
+    ),
+    ToolDefinition(
+        "close",
+        "Закрывает приложение на Mac по имени или пути к .app.",
+        _parameters({"target": {"type": "string", "description": "Имя приложения или путь к .app."}}, ["target"]),
+        "capabilities.apps", "close_target", "auto",
+    ),
+    ToolDefinition(
+        "find",
+        "Ищет файлы и каталоги внутри домашней папки по части имени.",
+        _parameters({
+            "name": {"type": "string", "description": "Имя или часть имени."},
+            "directory": {"type": "string", "description": "Абсолютный путь для поиска (по умолчанию домашняя папка)."},
+            "limit": {"type": "integer", "description": "Максимум результатов (до 50)."},
+            "kind": {"type": "string", "enum": ["file", "dir"], "description": "Фильтр: только файлы или только каталоги."},
+        }, ["name"]),
+        "capabilities.filesystem", "find", "auto",
+    ),
+    ToolDefinition(
+        "read",
+        "Читает текстовый файл (UTF-8) внутри домашней папки.",
+        _parameters({
+            "path": {"type": "string", "description": "Абсолютный путь к файлу."},
+            "max_bytes": {"type": "integer", "description": "Ограничение на количество читаемых байт."},
+        }, ["path"]),
+        "capabilities.filesystem", "read", "auto",
+    ),
+    ToolDefinition(
+        "write",
+        "Записывает текст в файл, создавая родительские каталоги.",
+        _parameters({
+            "path": {"type": "string", "description": "Абсолютный путь к файлу."},
+            "content": {"type": "string", "description": "Текст для записи."},
+            "append": {"type": "boolean", "description": "True — дописать в конец, False — перезаписать."},
+        }, ["path", "content"]),
+        "capabilities.filesystem", "write", "confirm",
+    ),
+    ToolDefinition(
+        "create",
+        "Создаёт новый файл или каталог внутри домашней папки.",
+        _parameters({
+            "path": {"type": "string", "description": "Абсолютный путь."},
+            "kind": {"type": "string", "enum": ["file", "dir"], "description": "Тип создаваемого объекта."},
+            "content": {"type": "string", "description": "Содержимое для файла."},
+            "overwrite": {"type": "boolean", "description": "True — перезаписать существующий файл."},
+        }, ["path"]),
+        "capabilities.filesystem", "create", "confirm",
+    ),
+    ToolDefinition(
+        "move",
+        "Перемещает файл или каталог в новый путь внутри домашней папки.",
+        _parameters({
+            "source": {"type": "string", "description": "Абсолютный путь источника."},
+            "destination": {"type": "string", "description": "Абсолютный путь назначения (файл или каталог)."},
+        }, ["source", "destination"]),
+        "capabilities.filesystem", "move", "confirm",
+    ),
+    ToolDefinition(
+        "copy",
+        "Копирует файл или каталог в новый путь внутри домашней папки.",
+        _parameters({
+            "source": {"type": "string", "description": "Абсолютный путь источника."},
+            "destination": {"type": "string", "description": "Абсолютный путь назначения."},
+        }, ["source", "destination"]),
+        "capabilities.filesystem", "copy", "confirm",
+    ),
+    ToolDefinition(
+        "rename",
+        "Переименовывает файл или каталог (только новое имя в том же каталоге).",
+        _parameters({
+            "path": {"type": "string", "description": "Абсолютный путь."},
+            "new_name": {"type": "string", "description": "Новое имя без разделителей пути."},
+        }, ["path", "new_name"]),
+        "capabilities.filesystem", "rename", "confirm",
+    ),
+    ToolDefinition(
+        "delete",
+        "Перемещает файл или каталог в Корзину macOS (безвозвратно не удаляет).",
+        _parameters({"path": {"type": "string", "description": "Абсолютный путь."}}, ["path"]),
+        "capabilities.filesystem", "delete", "confirm",
+    ),
+    ToolDefinition(
+        "shell",
+        "Выполняет команду в оболочке macOS с таймаутом. Возвращает код возврата, stdout и stderr.",
+        _parameters({
+            "command": {"type": "string", "description": "Команда для выполнения."},
+            "timeout": {"type": "integer", "description": "Таймаут в секундах (1-120)."},
+            "cwd": {"type": "string", "description": "Рабочий каталог (абсолютный путь внутри домашней папки)."},
+        }, ["command"]),
+        "capabilities.shell", "shell", "confirm",
+    ),
+    ToolDefinition(
+        "wait",
+        "Пауза на указанное число секунд (до 60).",
+        _parameters({
+            "seconds": {"type": "number", "description": "Секунды ожидания."},
+            "reason": {"type": "string", "description": "Причина ожидания."},
+        }, ["seconds"]),
+        "capabilities.wait", "wait", "auto",
+    ),
+    ToolDefinition(
+        "key",
+        "Отправляет клавиатурную комбинацию на Mac, например 'command+shift+4' или 'return'.",
+        _parameters({"keys": {"type": "string", "description": "Комбинация клавиш через + или пробел."}}, ["keys"]),
+        "capabilities.key", "key", "auto",
+    ),
+    ToolDefinition(
+        "select",
+        "Универсальный выбор элемента в точке экрана: наводит указатель на (x, y) и делает один левый клик. Композиция move+click без поиска элементов.",
+        _parameters({
+            "x": {"type": "number", "description": "Координата x."},
+            "y": {"type": "number", "description": "Координата y."},
+        }, ["x", "y"]),
+        "capabilities.gui", "select", "auto",
+    ),
+    ToolDefinition(
+        "click",
+        "Нажимает кнопку мыши в точке экрана (x, y).",
+        _parameters({
+            "x": {"type": "number", "description": "Координата x."},
+            "y": {"type": "number", "description": "Координата y."},
+            "button": {"type": "string", "enum": ["left", "right", "middle"], "description": "Кнопка мыши."},
+            "clicks": {"type": "integer", "description": "Количество кликов (1-10)."},
+        }, ["x", "y"]),
+        "capabilities.gui", "click", "auto",
+    ),
+    ToolDefinition(
+        "type",
+        "Печатает текст в указанное приложение (target). Перед вводом активирует target и проверяет, что он стал frontmost; только после этого отправляет keystroke. target обычно равен frontmost_app из последнего observe. Без target текст не печатается (target_required).",
+        _parameters({
+            "text": {"type": "string", "description": "Текст для ввода."},
+            "target": {"type": "string", "description": "Имя приложения, в которое печатать (например, frontmost_app из последнего observe)."},
+        }, ["text"]),
+        "capabilities.gui", "type_text", "auto",
+    ),
+    ToolDefinition(
+        "scroll",
+        "Прокручивает содержимое под курсором или в указанной точке.",
+        _parameters({
+            "x": {"type": "number", "description": "Координата x (необязательно)."},
+            "y": {"type": "number", "description": "Координата y (необязательно)."},
+            "direction": {"type": "string", "enum": ["up", "down", "left", "right"], "description": "Направление прокрутки."},
+            "amount": {"type": "integer", "description": "Величина прокрутки (1-50)."},
+        }),
+        "capabilities.gui", "scroll", "auto",
+    ),
+    ToolDefinition(
+        "drag",
+        "Перетаскивает объект из точки (x1, y1) в точку (x2, y2).",
+        _parameters({
+            "x1": {"type": "number", "description": "Стартовый x."},
+            "y1": {"type": "number", "description": "Стартовый y."},
+            "x2": {"type": "number", "description": "Конечный x."},
+            "y2": {"type": "number", "description": "Конечный y."},
+            "duration": {"type": "number", "description": "Длительность в секундах (0-5)."},
+            "button": {"type": "string", "enum": ["left", "right", "middle"], "description": "Кнопка мыши."},
+        }, ["x1", "y1", "x2", "y2"]),
+        "capabilities.gui", "drag", "auto",
+    ),
+    ToolDefinition(
+        "finish_task",
+        "Завершает задачу computer-use и сообщает итог. Вызывай, когда цель достигнута, экран соответствует ожиданию или дальше действовать невозможно.",
+        _parameters({"result": {"type": "string", "description": "Итог/статус завершения задачи."}}, ["result"]),
+        "capabilities.task", "finish_task", "auto",
     ),
 )
 

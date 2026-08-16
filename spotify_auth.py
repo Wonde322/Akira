@@ -11,7 +11,10 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlencode, urlparse
 
-CLIENT_ID = "71886dbe05744e1c9ea56d7ffd1eec1c"
+from config import SPOTIFY_TOKEN_FILE
+from spotify_control import CLIENT_ID
+
+
 REDIRECT_URI = "http://127.0.0.1:8766/callback"
 
 SCOPES = "user-read-playback-state user-modify-playback-state"
@@ -113,7 +116,7 @@ request = urllib.request.Request(
 with urllib.request.urlopen(request, context=SSL_CONTEXT) as response:
     token = json.loads(response.read())
 
-token_path = os.path.expanduser("~/Akira/spotify_token.json")
+token_path = SPOTIFY_TOKEN_FILE
 
 with open(token_path, "w") as f:
     json.dump(token, f, indent=2)

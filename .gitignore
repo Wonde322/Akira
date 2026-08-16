@@ -20,3 +20,8 @@ memory.json
 .mypy_cache/
 
 *.log
+*.lock
+*.jsonl
+.venv/
+.pytest_cache/
+logs/
