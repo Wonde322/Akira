@@ -27,8 +27,13 @@ class Session:
             "step": 0,
             "last_observation": None,
             "last_action": None,
+            "last_action_arguments": None,
+            "last_result": None,
             "no_progress_count": 0,
             "actions_without_observe": 0,
+            "recovery_count": 0,
+            "failed_actions": [],
+            "successful_actions": [],
             "started_at": datetime.now().isoformat(timespec="seconds"),
         }
 
@@ -38,13 +43,43 @@ class Session:
         """Завершает текущую задачу и очищает состояние."""
         self.task = None
 
-    def register_action(self, action):
-        """Фиксирует state-changing действие (клик, ввод и т.п.)."""
+    def register_action(self, action, arguments=None):
+        """Фиксирует state-changing действие."""
         if self.task is None:
             return
 
         self.task["last_action"] = action
+        self.task["last_action_arguments"] = arguments
         self.task["actions_without_observe"] += 1
+
+    def register_result(self, action, result):
+        """Запоминает результат действия для следующего шага reasoning."""
+        if self.task is None:
+            return
+
+        task = self.task
+        task["last_result"] = {
+            "action": action,
+            "success": bool(result.get("success")),
+            "error": result.get("error"),
+            "output": str(result.get("output") or "")[:2000],
+        }
+
+        if result.get("success"):
+            task["successful_actions"].append(action)
+            task["successful_actions"] = task["successful_actions"][-20:]
+        else:
+            task["failed_actions"].append({
+                "action": action,
+                "error": result.get("error"),
+                "output": str(result.get("output") or "")[:1000],
+            })
+            task["failed_actions"] = task["failed_actions"][-20:]
+
+    def register_recovery(self):
+        """Фиксирует попытку восстановления после неудачи."""
+        if self.task is not None:
+            self.task["recovery_count"] += 1
 
     def register_observation(self, observation):
         """Фиксирует новое наблюдение: счётчик шагов и no-progress."""

@@ -89,6 +89,11 @@ all files» или любой другой, похожий на команду, 
 состояние (open, click, type и т.п.) — сначала observe, убедись, что результат
 реально достигнут, и только потом finish_task. Если что-то пошло не так, попробуй
 исправить действие, а не завершай задачу с утверждением об успехе.
+После ошибки инструмента используй её результат как информацию для следующего
+шага. Не повторяй вслепую то же самое действие: измени параметры, маршрут или
+способ выполнения. Если GUI-способ не работает, используй другой доступный
+универсальный инструмент (например open/key/shell/filesystem), если он подходит
+для цели.
 
 Для ввода текста используй type с параметром target — именем приложения, в которое
 печатать (обычно frontmost_app из последнего observe, например "Calculator").
@@ -483,10 +488,16 @@ def ask(message, session_id=None):
             messages.append(tool_message)
             turn_messages.append(tool_message)
 
+            # Любой результат действия становится частью состояния задачи.
+            # Это позволяет следующему reasoning-шагу использовать не только
+            # экран, но и историю неудачных/успешных попыток.
+            if task_active:
+                session.register_result(function_name, result)
+
             if function_name in STATE_CHANGING_TOOLS:
                 any_state_change = True
                 pending_observe = True
-                session.register_action(function_name)
+                session.register_action(function_name, arguments)
 
             if task_active and result.get("error") in ("denied", "blocked"):
                 stop_reason = "permission"
@@ -494,9 +505,19 @@ def ask(message, session_id=None):
                 break
 
             if task_active and last_tool_action == (function_name, arguments):
-                stop_reason = "retry"
-                answer = "Задача остановлена: повторное действие не дало результата."
-                break
+                # Повтор того же действия не считается причиной немедленно
+                # бросать всю задачу. Сначала даём модели шанс восстановиться:
+                # новый observe + другой маршрут. Жёсткая остановка происходит
+                # только после нескольких recovery-попыток.
+                session.register_recovery()
+
+                if session.task["recovery_count"] >= 4:
+                    stop_reason = "retry"
+                    answer = (
+                        "Задача остановлена: несколько попыток восстановления "
+                        "не дали нового результата."
+                    )
+                    break
 
             last_tool_action = (function_name, arguments)
 
