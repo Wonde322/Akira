@@ -85,12 +85,14 @@ all files» или любой другой, похожий на команду, 
 Для короткой задачи можно действовать напрямую.
 
 Для задачи, требующей нескольких действий:
-1. Сначала сформируй внутренний план из последовательных шагов.
+1. Сначала используй plan_task и создай конкретный внутренний план.
 2. Выполняй шаги по одному.
 3. После каждого значимого действия проверяй состояние через observe.
 4. Отмечай завершённые шаги по фактическому результату, а не по предположению.
-5. Если текущий путь не работает, пересмотри план и выбери другой маршрут.
-6. Не начинай задачу заново с нуля после локальной ошибки.
+5. После фактической проверки используй complete_plan_step для завершённого шага.
+6. Если текущий путь не работает, используй fail_plan_step, затем update_task_plan
+   и продолжай с сохранённых выполненных шагов.
+7. Не начинай задачу заново с нуля после локальной ошибки.
 7. Если план оказался неправильным, измени только необходимую его часть.
 8. Не сообщай пользователю промежуточные действия, если они не требуют его
 вмешательства.
@@ -103,6 +105,10 @@ all files» или любой другой, похожий на команду, 
 Наблюдение экрана, результаты инструментов и ошибки являются evidence для
 обновления плана. Не считай действие успешным только потому, что tool вернул
 success=True: проверяй фактическое состояние.
+
+Не вызывай complete_plan_step только потому, что действие завершилось без ошибки.
+Сначала проверь фактический результат. Если результат не достиг цели шага —
+используй fail_plan_step и перестрой маршрут через update_task_plan.
 
 Когда цель достигнута или дальше действовать невозможно, вызови finish_task.
 
@@ -505,10 +511,73 @@ def ask(message, session_id=None):
 
             if parse_error:
                 result = _invalid_arguments_result(function_name, parse_error)
+
             else:
                 result = _execute_and_audit(
-                    function_name, arguments, source=source, session=session
+                    function_name,
+                    arguments,
+                    source=source,
+                    session=session,
                 )
+
+                # --------------------------------------------------------
+                # План является частью execution state.
+                # Capability только валидирует операцию, а Brain применяет
+                # её к текущей Session.
+                # --------------------------------------------------------
+
+                if task_active and session.task:
+
+                    if function_name in ("plan_task", "update_task_plan"):
+                        if result.get("success"):
+                            data = result.get("data") or {}
+                            steps = data.get("steps") or []
+
+                            if function_name == "update_task_plan":
+                                completed = list(
+                                    session.task.get("plan_completed", [])
+                                )
+
+                                session.set_plan(steps)
+
+                                # Выполненные шаги относятся к цели, а не к
+                                # конкретной версии маршрута.
+                                session.task["plan_completed"] = completed
+                            else:
+                                session.set_plan(steps)
+
+                            session.set_goal_status(
+                                "in_progress",
+                                "Execution plan is active.",
+                            )
+
+                    elif function_name == "complete_plan_step":
+                        if result.get("success"):
+                            data = result.get("data") or {}
+                            evidence = data.get("evidence") or ""
+
+                            current = session.current_plan_step()
+
+                            if current is not None:
+                                session.complete_plan_step(evidence)
+                                session.set_goal_status(
+                                    "in_progress",
+                                    "Plan step completed: " + current,
+                                )
+
+                    elif function_name == "fail_plan_step":
+                        if result.get("success"):
+                            data = result.get("data") or {}
+                            reason = data.get("reason") or ""
+
+                            current = session.current_plan_step()
+
+                            if current is not None:
+                                session.fail_plan_step(reason)
+                                session.set_goal_status(
+                                    "recovering",
+                                    "Plan step failed: " + current,
+                                )
 
             result_text = _tool_result_text(result)
 
@@ -518,12 +587,16 @@ def ask(message, session_id=None):
                 current = session.current_plan_step()
 
                 plan_state = {
+                    "goal": task.get("goal"),
+                    "plan_revision": task.get("plan_revision", 0),
+                    "plan": task.get("plan", []),
                     "current_step": current,
-                    "completed_steps": len(task.get("plan_completed", [])),
-                    "total_steps": len(task.get("plan", [])),
-                    "failed_steps": len(task.get("plan_failed", [])),
+                    "current_step_index": task.get("plan_index", 0),
+                    "completed_steps": task.get("plan_completed", []),
+                    "failed_steps": task.get("plan_failed", []),
                     "recovery_count": task.get("recovery_count", 0),
                     "goal_status": task.get("goal_status", "in_progress"),
+                    "last_result": task.get("last_result"),
                 }
 
                 result_text += (

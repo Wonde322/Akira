@@ -71,6 +71,29 @@ TOOL_REGISTRY = (
         "capabilities.task", "update_task_plan", "auto",
     ),
     ToolDefinition(
+        "complete_plan_step",
+        "Подтверждает, что текущий шаг внутреннего плана действительно выполнен. "
+        "Используй только после фактической проверки результата.",
+        _parameters({
+            "evidence": {
+                "type": "string",
+                "description": "Краткое фактическое подтверждение результата.",
+            },
+        }),
+        "capabilities.task", "complete_plan_step", "auto",
+    ),
+    ToolDefinition(
+        "fail_plan_step",
+        "Фиксирует, что текущий шаг плана не выполнен, с причиной для последующего replanning.",
+        _parameters({
+            "reason": {
+                "type": "string",
+                "description": "Причина, по которой текущий шаг не выполнен.",
+            },
+        }),
+        "capabilities.task", "fail_plan_step", "auto",
+    ),
+    ToolDefinition(
         "open_youtube",
         "Открывает Google Chrome и выполняет поиск на YouTube. Используй, когда пользователь просит открыть или найти что-либо на YouTube.",
         _parameters({"query": {"type": "string", "description": "Что найти на YouTube."}}, ["query"]),
