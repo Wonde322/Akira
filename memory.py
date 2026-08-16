@@ -10,7 +10,21 @@ from datetime import datetime, timedelta
 from config import MEMORY_FILE
 
 
-COLLECTION_FIELDS = ("goals", "tasks", "events", "activity")
+COLLECTION_FIELDS = (
+    "goals",
+    "tasks",
+    "events",
+    "activity",
+
+    # Memory 2.0
+    # semantic: устойчивые факты / предпочтения пользователя
+    # episodic: конкретные прошлые события/эпизоды
+    # procedural: успешные способы выполнения повторяющихся задач
+    "facts",
+    "preferences",
+    "episodes",
+    "procedures",
+)
 
 _process_lock = threading.RLock()
 
@@ -45,6 +59,16 @@ def _empty_memory():
         "tasks": [],
         "events": [],
         "activity": [],
+
+        # Semantic memory.
+        "facts": [],
+        "preferences": [],
+
+        # Episodic memory.
+        "episodes": [],
+
+        # Procedural memory.
+        "procedures": [],
     }
 
 
@@ -95,6 +119,65 @@ def _normalize_memory(data):
         }
         for session in memory["activity"]
         if isinstance(session, dict)
+    ]
+
+    # --------------------------------------------------------
+    # Memory 2.0 collections
+    # --------------------------------------------------------
+
+    memory["facts"] = [
+        {
+            "key": "",
+            "value": "",
+            "category": "fact",
+            "source": "unknown",
+            "confidence": 1.0,
+            "created": "",
+            "updated": "",
+            **fact,
+        }
+        for fact in memory["facts"]
+        if isinstance(fact, dict)
+    ]
+
+    memory["preferences"] = [
+        {
+            "key": "",
+            "value": "",
+            "source": "unknown",
+            "confidence": 1.0,
+            "created": "",
+            "updated": "",
+            **preference,
+        }
+        for preference in memory["preferences"]
+        if isinstance(preference, dict)
+    ]
+
+    memory["episodes"] = [
+        {
+            "summary": "",
+            "context": "",
+            "importance": 0.5,
+            "tags": [],
+            "created": "",
+            **episode,
+        }
+        for episode in memory["episodes"]
+        if isinstance(episode, dict)
+    ]
+
+    memory["procedures"] = [
+        {
+            "name": "",
+            "steps": [],
+            "success_count": 0,
+            "created": "",
+            "updated": "",
+            **procedure,
+        }
+        for procedure in memory["procedures"]
+        if isinstance(procedure, dict)
     ]
 
     return memory
@@ -327,3 +410,648 @@ def get_activity_totals(days: int = 1):
         totals[app] = totals.get(app, 0) + duration
 
     return totals
+
+
+# ============================================================
+# MEMORY 2.0
+# ============================================================
+#
+# Three persistent layers live in the same atomic store:
+#
+#   semantic    -> facts/preferences
+#   episodic    -> concrete events/episodes
+#   procedural  -> successful reusable ways of doing things
+#
+# Working memory remains in Session and is intentionally NOT persisted
+# here as a replacement for current execution state.
+# ============================================================
+
+
+def _memory_tokens(text):
+    """Small dependency-free tokenizer for local memory retrieval."""
+
+    import re
+
+    stopwords = {
+        "и", "или", "а", "но", "что", "это", "как", "мне", "ты", "я",
+        "в", "на", "из", "по", "для", "с", "со", "у", "к", "от", "до",
+        "the", "a", "an", "and", "or", "to", "of", "for", "in", "on",
+        "with", "is", "it", "my", "me",
+    }
+
+    tokens = re.findall(
+        r"[a-zA-Zа-яА-ЯёЁ0-9_]+",
+        str(text or "").lower(),
+    )
+
+    return {
+        token
+        for token in tokens
+        if token not in stopwords and len(token) > 1
+    }
+
+
+def _memory_score(query, text, importance=0.0):
+    query_tokens = _memory_tokens(query)
+    text_tokens = _memory_tokens(text)
+
+    if not query_tokens or not text_tokens:
+        return 0.0
+
+    overlap = query_tokens & text_tokens
+
+    if not overlap:
+        return 0.0
+
+    score = float(len(overlap))
+
+    # Exact phrase is a strong signal.
+    normalized_query = " ".join(str(query or "").lower().split())
+    normalized_text = " ".join(str(text or "").lower().split())
+
+    if normalized_query and normalized_query in normalized_text:
+        score += 6.0
+
+    score += float(importance or 0.0)
+
+    return score
+
+
+def remember_memory(
+    content: str,
+    kind: str = "fact",
+    key: str = "",
+    source: str = "user",
+    importance: float = 0.7,
+):
+    """Store durable memory in the appropriate persistent layer.
+
+    kind:
+        fact       -> semantic fact
+        preference -> semantic preference
+        episode    -> episodic memory
+        procedure  -> procedural memory
+
+    This function deliberately keeps the schema simple and human-readable.
+    """
+
+    content = str(content or "").strip()
+    kind = str(kind or "fact").strip().lower()
+    key = str(key or "").strip()
+    source = str(source or "user").strip()
+
+    if not content:
+        return {
+            "success": False,
+            "error": "empty_memory",
+            "output": "Нельзя сохранить пустую память.",
+        }
+
+    allowed = {
+        "fact",
+        "preference",
+        "episode",
+        "procedure",
+    }
+
+    if kind not in allowed:
+        return {
+            "success": False,
+            "error": "invalid_memory_kind",
+            "output": (
+                "kind должен быть fact, preference, episode или procedure."
+            ),
+        }
+
+    importance = max(
+        0.0,
+        min(float(importance or 0.0), 1.0),
+    )
+
+    now = datetime.now().isoformat(timespec="seconds")
+
+    def update(memory):
+        if kind == "fact":
+            # Same key = update existing semantic fact rather than
+            # accumulating contradictory duplicates.
+            target = None
+
+            if key:
+                for item in memory["facts"]:
+                    if item.get("key", "").lower() == key.lower():
+                        target = item
+                        break
+
+            if target is None:
+                memory["facts"].append({
+                    "key": key or content[:80],
+                    "value": content,
+                    "category": "fact",
+                    "source": source,
+                    "confidence": importance,
+                    "created": now,
+                    "updated": now,
+                })
+            else:
+                target.update({
+                    "value": content,
+                    "source": source,
+                    "confidence": importance,
+                    "updated": now,
+                })
+
+        elif kind == "preference":
+            target = None
+
+            if key:
+                for item in memory["preferences"]:
+                    if item.get("key", "").lower() == key.lower():
+                        target = item
+                        break
+
+            if target is None:
+                memory["preferences"].append({
+                    "key": key or content[:80],
+                    "value": content,
+                    "source": source,
+                    "confidence": importance,
+                    "created": now,
+                    "updated": now,
+                })
+            else:
+                target.update({
+                    "value": content,
+                    "source": source,
+                    "confidence": importance,
+                    "updated": now,
+                })
+
+        elif kind == "episode":
+            memory["episodes"].append({
+                "summary": content,
+                "context": key,
+                "importance": importance,
+                "tags": [],
+                "created": now,
+            })
+
+            memory["episodes"] = memory["episodes"][-500:]
+
+        elif kind == "procedure":
+            target = None
+
+            if key:
+                for item in memory["procedures"]:
+                    if item.get("name", "").lower() == key.lower():
+                        target = item
+                        break
+
+            if target is None:
+                memory["procedures"].append({
+                    "name": key or content[:80],
+                    "steps": [content],
+                    "success_count": 1,
+                    "created": now,
+                    "updated": now,
+                })
+            else:
+                if content not in target["steps"]:
+                    target["steps"].append(content)
+
+                target["steps"] = target["steps"][-20:]
+                target["success_count"] = (
+                    int(target.get("success_count", 0)) + 1
+                )
+                target["updated"] = now
+
+    _update_memory(update)
+
+    return {
+        "success": True,
+        "data": {
+            "kind": kind,
+            "key": key,
+            "content": content,
+        },
+        "output": "Память сохранена.",
+    }
+
+
+def recall_memory(query: str, limit: int = 8):
+    """Retrieve the most relevant durable memories."""
+
+    query = str(query or "").strip()
+
+    if not query:
+        return {
+            "success": False,
+            "error": "empty_query",
+            "output": "Не указан запрос для поиска памяти.",
+        }
+
+    limit = max(1, min(int(limit or 8), 20))
+    memory = load_memory()
+
+    candidates = []
+
+    for item in memory["facts"]:
+        text = (
+            str(item.get("key", ""))
+            + " "
+            + str(item.get("value", ""))
+        )
+
+        score = _memory_score(
+            query,
+            text,
+            item.get("confidence", 0.0),
+        )
+
+        if score > 0:
+            candidates.append((
+                score,
+                "fact",
+                item,
+            ))
+
+    for item in memory["preferences"]:
+        text = (
+            str(item.get("key", ""))
+            + " "
+            + str(item.get("value", ""))
+        )
+
+        score = _memory_score(
+            query,
+            text,
+            item.get("confidence", 0.0),
+        )
+
+        if score > 0:
+            candidates.append((
+                score,
+                "preference",
+                item,
+            ))
+
+    for item in memory["episodes"]:
+        text = (
+            str(item.get("summary", ""))
+            + " "
+            + str(item.get("context", ""))
+            + " "
+            + " ".join(item.get("tags", []))
+        )
+
+        score = _memory_score(
+            query,
+            text,
+            item.get("importance", 0.0),
+        )
+
+        if score > 0:
+            candidates.append((
+                score,
+                "episode",
+                item,
+            ))
+
+    for item in memory["procedures"]:
+        text = (
+            str(item.get("name", ""))
+            + " "
+            + " ".join(str(step) for step in item.get("steps", []))
+        )
+
+        score = _memory_score(
+            query,
+            text,
+            min(
+                float(item.get("success_count", 0)) / 10.0,
+                1.0,
+            ),
+        )
+
+        if score > 0:
+            candidates.append((
+                score,
+                "procedure",
+                item,
+            ))
+
+    # Existing goal/task/event memory remains searchable too.
+    for item in memory["goals"]:
+        text = str(item.get("text", ""))
+
+        score = _memory_score(query, text, 0.5)
+
+        if score > 0:
+            candidates.append((
+                score,
+                "goal",
+                item,
+            ))
+
+    for item in memory["tasks"]:
+        text = (
+            str(item.get("text", ""))
+            + " "
+            + str(item.get("goal", ""))
+        )
+
+        score = _memory_score(
+            query,
+            text,
+            0.5 if not item.get("completed") else 0.1,
+        )
+
+        if score > 0:
+            candidates.append((
+                score,
+                "task",
+                item,
+            ))
+
+    candidates.sort(
+        key=lambda item: -item[0]
+    )
+
+    selected = candidates[:limit]
+
+    result = []
+
+    for score, kind, item in selected:
+        result.append({
+            "kind": kind,
+            "score": round(score, 3),
+            "memory": item,
+        })
+
+    if not result:
+        return {
+            "success": True,
+            "data": {
+                "query": query,
+                "results": [],
+            },
+            "output": "Релевантной сохранённой памяти не найдено.",
+        }
+
+    lines = []
+
+    for item in result:
+        memory_item = item["memory"]
+        kind = item["kind"]
+
+        if kind in {"fact", "preference"}:
+            lines.append(
+                f"[{kind}] "
+                f"{memory_item.get('key')}: "
+                f"{memory_item.get('value')}"
+            )
+
+        elif kind == "episode":
+            lines.append(
+                "[episode] "
+                + str(memory_item.get("summary", ""))
+            )
+
+        elif kind == "procedure":
+            lines.append(
+                "[procedure] "
+                + str(memory_item.get("name", ""))
+                + ": "
+                + " → ".join(
+                    str(step)
+                    for step in memory_item.get("steps", [])
+                )
+            )
+
+        elif kind == "goal":
+            lines.append(
+                "[goal] "
+                + str(memory_item.get("text", ""))
+            )
+
+        elif kind == "task":
+            lines.append(
+                "[task] "
+                + str(memory_item.get("text", ""))
+            )
+
+    return {
+        "success": True,
+        "data": {
+            "query": query,
+            "results": result,
+        },
+        "output": "\n".join(lines),
+    }
+
+
+def build_memory_context(query: str, limit: int = 6) -> str:
+    """Build a compact memory block for reasoning context.
+
+    This is intentionally read-only and never mutates memory.
+    """
+
+    result = recall_memory(query, limit)
+
+    if not result.get("success"):
+        return ""
+
+    data = result.get("data") or {}
+    results = data.get("results") or []
+
+    if not results:
+        return ""
+
+    lines = [
+        "[RELEVANT LONG-TERM MEMORY]",
+    ]
+
+    for item in results:
+        kind = item["kind"]
+        memory_item = item["memory"]
+
+        if kind in {"fact", "preference"}:
+            lines.append(
+                f"- {kind}: "
+                f"{memory_item.get('key')} = "
+                f"{memory_item.get('value')}"
+            )
+
+        elif kind == "episode":
+            lines.append(
+                "- episode: "
+                + str(memory_item.get("summary", ""))
+            )
+
+        elif kind == "procedure":
+            lines.append(
+                "- procedure: "
+                + str(memory_item.get("name", ""))
+                + " | "
+                + " → ".join(
+                    str(step)
+                    for step in memory_item.get("steps", [])
+                )
+            )
+
+        elif kind == "goal":
+            lines.append(
+                "- goal: "
+                + str(memory_item.get("text", ""))
+            )
+
+        elif kind == "task":
+            lines.append(
+                "- task: "
+                + str(memory_item.get("text", ""))
+            )
+
+    lines.append(
+        "[END RELEVANT LONG-TERM MEMORY]"
+    )
+
+    return "\n".join(lines)
+
+
+# === AKIRA MEMORY 2.0 NORMALIZATION OVERRIDE ===
+#
+# This definition intentionally lives at the end of the module.
+# Existing load_memory() resolves _normalize_memory at runtime,
+# therefore the override safely upgrades legacy memory files
+# without rewriting the existing Memory 2.0 implementation.
+
+def _normalize_memory(data):
+    """Normalize legacy and Memory 2.0 memory without data loss."""
+
+    memory = data.copy() if isinstance(data, dict) else {}
+
+    # --------------------------------------------------------
+    # Legacy collections
+    # --------------------------------------------------------
+
+    for field in (
+        "goals",
+        "tasks",
+        "events",
+        "activity",
+    ):
+        if not isinstance(memory.get(field), list):
+            memory[field] = []
+
+    memory["goals"] = [
+        {
+            "text": "",
+            "created": "",
+            **item,
+        }
+        for item in memory["goals"]
+        if isinstance(item, dict)
+    ]
+
+    memory["tasks"] = [
+        {
+            "text": "",
+            "goal": None,
+            "completed": False,
+            "created": "",
+            **item,
+        }
+        for item in memory["tasks"]
+        if isinstance(item, dict)
+    ]
+
+    memory["events"] = [
+        {
+            "text": "",
+            "time": "",
+            **item,
+        }
+        for item in memory["events"]
+        if isinstance(item, dict)
+    ]
+
+    memory["activity"] = [
+        {
+            "app": "Неизвестно",
+            "started": "",
+            "ended": "",
+            "duration_seconds": 0,
+            **item,
+        }
+        for item in memory["activity"]
+        if isinstance(item, dict)
+    ]
+
+    # --------------------------------------------------------
+    # Memory 2.0 collections
+    # --------------------------------------------------------
+
+    for field in (
+        "facts",
+        "preferences",
+        "episodes",
+        "procedures",
+    ):
+        if not isinstance(memory.get(field), list):
+            memory[field] = []
+
+    memory["facts"] = [
+        {
+            "key": "",
+            "value": "",
+            "category": "fact",
+            "source": "unknown",
+            "confidence": 1.0,
+            "created": "",
+            "updated": "",
+            **item,
+        }
+        for item in memory["facts"]
+        if isinstance(item, dict)
+    ]
+
+    memory["preferences"] = [
+        {
+            "key": "",
+            "value": "",
+            "source": "unknown",
+            "confidence": 1.0,
+            "created": "",
+            "updated": "",
+            **item,
+        }
+        for item in memory["preferences"]
+        if isinstance(item, dict)
+    ]
+
+    memory["episodes"] = [
+        {
+            "summary": "",
+            "context": "",
+            "importance": 0.5,
+            "tags": [],
+            "created": "",
+            **item,
+        }
+        for item in memory["episodes"]
+        if isinstance(item, dict)
+    ]
+
+    memory["procedures"] = [
+        {
+            "name": "",
+            "steps": [],
+            "success_count": 0,
+            "created": "",
+            "updated": "",
+            **item,
+        }
+        for item in memory["procedures"]
+        if isinstance(item, dict)
+    ]
+
+    return memory

@@ -167,6 +167,55 @@ TOOL_REGISTRY = (
         "tools", "get_running_apps", "auto",
     ),
     ToolDefinition(
+        "remember_memory",
+        "Сохраняет долговременную память Akira. Используй для устойчивых "
+        "фактов, предпочтений, важных эпизодов и успешных процедур.",
+        _parameters({
+            "content": {
+                "type": "string",
+                "description": "Что нужно сохранить.",
+            },
+            "kind": {
+                "type": "string",
+                "enum": [
+                    "fact",
+                    "preference",
+                    "episode",
+                    "procedure",
+                ],
+                "description": "Тип долговременной памяти.",
+            },
+            "key": {
+                "type": "string",
+                "description": "Короткий ключ/название памяти.",
+            },
+            "source": {
+                "type": "string",
+                "description": "Источник памяти, например user или agent.",
+            },
+            "importance": {
+                "type": "number",
+                "description": "Важность от 0 до 1.",
+            },
+        }, ["content"]),
+        "memory", "remember_memory", "auto",
+    ),
+    ToolDefinition(
+        "recall_memory",
+        "Ищет релевантную долговременную память пользователя по смыслу запроса.",
+        _parameters({
+            "query": {
+                "type": "string",
+                "description": "Что нужно вспомнить.",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Максимум результатов, 1-20.",
+            },
+        }, ["query"]),
+        "memory", "recall_memory", "auto",
+    ),
+    ToolDefinition(
         "add_goal",
         "Сохраняет долгосрочную цель пользователя.",
         _parameters({"goal": {"type": "string", "description": "Формулировка цели."}}, ["goal"]),

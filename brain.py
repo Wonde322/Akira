@@ -23,6 +23,7 @@ from config import (
     STATE_CHANGING_TOOLS,
     create_groq_client,
 )
+from memory import build_memory_context
 from permissions import get_permission, request_confirmation
 from session import Session
 from tool_registry import get_tool_implementation, get_tool_schemas
@@ -60,6 +61,18 @@ SYSTEM_PROMPT = """
 
 Если пользователь просит что-то сохранить, обязательно используй соответствующий инструмент.
 Не говори, что информация сохранена, если инструмент не был вызван успешно.
+
+Если пользователь сообщает устойчивый факт о себе, важное предпочтение,
+долгосрочную информацию или успешный повторяемый способ выполнения задачи,
+сохрани это через remember_memory, если информация действительно пригодится
+в будущих разговорах. Не сохраняй случайные одноразовые детали без пользы.
+Если пользователь просит что-то забыть, не придумывай удаление: сначала используй
+доступные memory-инструменты и сообщи, если для удаления отдельной capability
+ещё нет.
+
+Устойчивые факты и предпочтения относятся к semantic memory.
+Важные прошлые ситуации относятся к episodic memory.
+Успешные повторяемые способы выполнения задач относятся к procedural memory.
 
 Если пользователь спрашивает, чем он занимался за определённый период,
 используй инструмент analyze_period.
@@ -518,6 +531,20 @@ def ask(message, session_id=None):
     ]
 
     messages.extend(session.history)
+
+    # Relevant long-term memory is retrieved automatically for every
+    # user request. It is compact and read-only; explicit writes still
+    # require the remember_memory tool.
+    memory_context = build_memory_context(
+        message,
+        limit=6,
+    )
+
+    if memory_context:
+        messages.append({
+            "role": "system",
+            "content": memory_context,
+        })
 
     turn_messages = []
     answer = None
