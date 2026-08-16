@@ -12,12 +12,12 @@ GROQ_API_KEY_ENV = "GROQ_API_KEY"
 MODEL = "openai/gpt-oss-120b"
 
 MAX_HISTORY = 12
-MAX_TOOL_ITERATIONS = 8
+MAX_TOOL_ITERATIONS = 128
 
 # Максимум сообщений одного хода (user + tool-активность + ответ),
 # которые сохраняются в истории сессии. Ограничивает, чтобы длинный
 # tool-loop не выталкивал исходный user message из окна контекста.
-MAX_TURN_PERSISTED = 8
+MAX_TURN_PERSISTED = 16
 
 MEMORY_FILE = str(PROJECT_ROOT / "memory.json")
 PERMISSIONS_FILE = str(PROJECT_ROOT / "permissions.json")
@@ -62,9 +62,9 @@ VISION_MAX_DESCRIPTION_CHARS = 2000
 TTS_VOICE = "Milena"
 
 # Computer-use loop
-COMPUTER_USE_MAX_STEPS = 15
-MAX_ACTIONS_WITHOUT_OBSERVE = 5
-NO_PROGRESS_LIMIT = 3
+COMPUTER_USE_MAX_STEPS = 100
+MAX_ACTIONS_WITHOUT_OBSERVE = 8
+NO_PROGRESS_LIMIT = 5
 MAX_OBSERVATION_HISTORY = 8
 
 # Инструменты, включающие computer-use режим, и state-changing (требуют observe).
