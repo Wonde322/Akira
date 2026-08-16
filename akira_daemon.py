@@ -47,6 +47,7 @@ class AkiraDaemon:
         self._last_heartbeat = None
 
         self._runtime = None
+        self._scheduler = None
 
     # ========================================================
     # Lifecycle
@@ -65,8 +66,10 @@ class AkiraDaemon:
         # Lazy import: daemon itself can start even when the
         # LLM/network is temporarily unavailable.
         from task_runtime import get_runtime
+        from scheduler import get_scheduler
 
         self._runtime = get_runtime()
+        self._scheduler = get_scheduler()
 
         self._started = True
 
@@ -133,6 +136,7 @@ class AkiraDaemon:
         )
 
         self._maintain_runtime()
+        self._tick_scheduler()
 
     def _maintain_runtime(self):
         runtime = self._runtime
@@ -149,6 +153,32 @@ class AkiraDaemon:
         except Exception as error:
             print(
                 "[Akira daemon] runtime health error:",
+                error,
+            )
+
+    def _tick_scheduler(self):
+        scheduler = self._scheduler
+
+        if scheduler is None:
+            return
+
+        try:
+            result = scheduler.tick()
+
+            launched = result.get(
+                "launched",
+                [],
+            )
+
+            if launched:
+                print(
+                    "[Akira daemon] scheduled tasks launched:",
+                    launched,
+                )
+
+        except Exception as error:
+            print(
+                "[Akira daemon] scheduler error:",
                 error,
             )
 

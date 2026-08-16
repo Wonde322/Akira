@@ -702,3 +702,58 @@ TOOL_REGISTRY = TOOL_REGISTRY + (
         "auto",
     ),
 )
+
+# === AKIRA SCHEDULER ===
+#
+# Scheduler decides WHEN a Brain task should start.
+# Actual execution remains inside TaskRuntime.
+
+TOOL_REGISTRY = TOOL_REGISTRY + (
+    ToolDefinition(
+        "schedule_task",
+        "Планирует запуск задачи Akira на указанное время. Можно задать повторение через interval_seconds.",
+        _parameters({
+            "goal": {
+                "type": "string",
+                "description": "Полная цель задачи.",
+            },
+            "run_at": {
+                "type": "string",
+                "description": "ISO-8601 дата/время первого запуска, например 2026-08-17T10:00:00+04:00.",
+            },
+            "interval_seconds": {
+                "type": "integer",
+                "description": "Если указан, повторять задачу через это количество секунд.",
+            },
+        }, ["goal", "run_at"]),
+        "scheduler",
+        "schedule_task",
+        "auto",
+    ),
+    ToolDefinition(
+        "scheduled_tasks",
+        "Показывает запланированные задачи Akira.",
+        _parameters({
+            "limit": {
+                "type": "integer",
+                "description": "Количество задач, максимум 100.",
+            },
+        }),
+        "scheduler",
+        "scheduled_tasks",
+        "auto",
+    ),
+    ToolDefinition(
+        "scheduled_task_cancel",
+        "Отключает запланированную задачу.",
+        _parameters({
+            "job_id": {
+                "type": "string",
+                "description": "ID scheduled task.",
+            },
+        }, ["job_id"]),
+        "scheduler",
+        "scheduled_task_cancel",
+        "auto",
+    ),
+)
