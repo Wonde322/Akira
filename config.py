@@ -78,6 +78,8 @@ COMPUTER_USE_TOOLS = (
     "drag",
     "key",
     "observe",
+    "wait",
+    "verify_goal",
     "finish_task",
 )
 STATE_CHANGING_TOOLS = (
