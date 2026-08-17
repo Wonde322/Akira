@@ -381,6 +381,12 @@ class Session:
             })
             task["plan_index"] += 1
 
+        if task.get("phase") not in {"done", "failed", "permission"}:
+            self.transition(
+                "acting",
+                "plan step completed",
+            )
+
     def fail_plan_step(self, reason=None):
         if self.task is None:
             return
@@ -393,6 +399,12 @@ class Session:
                 "step": task["plan"][index],
                 "reason": str(reason or "")[:1000],
             })
+
+        if task.get("phase") not in {"done", "failed", "permission"}:
+            self.transition(
+                "recovering",
+                "plan step failed",
+            )
 
     def set_goal_status(self, status, evidence=None):
         if self.task is None:
