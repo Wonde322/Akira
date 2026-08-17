@@ -1401,7 +1401,10 @@ def ask(message, session_id=None):
                 answer = result.get("output") or _tool_result_text(result)
                 break
 
-            if task_active and last_tool_action == (function_name, arguments):
+            if (
+                session.task is not None
+                and last_tool_action == (function_name, arguments)
+            ):
                 # Повтор того же действия не считается причиной немедленно
                 # бросать всю задачу. Сначала даём модели шанс восстановиться:
                 # новый observe + другой маршрут. Жёсткая остановка происходит
