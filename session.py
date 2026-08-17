@@ -355,6 +355,24 @@ class Session:
         self.task["plan_failed"] = []
         self.task["plan_revision"] += 1
 
+    def plan_is_complete(self):
+        """Whether every planned step has been completed."""
+        if self.task is None:
+            return False
+
+        task = self.task
+        plan = task.get("plan") or []
+        index = task.get("plan_index", 0)
+
+        return bool(plan) and index >= len(plan)
+
+    def plan_has_remaining_steps(self):
+        """Whether the current plan still has executable steps."""
+        if self.task is None:
+            return False
+
+        return self.current_plan_step() is not None
+
     def current_plan_step(self):
         if self.task is None:
             return None
