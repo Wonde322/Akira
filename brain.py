@@ -974,6 +974,30 @@ def ask(message, session_id=None):
                                 ),
                             }
 
+                        # Successful semantic verification is a deterministic
+                        # terminal state. Do not require the LLM to emit an
+                        # additional finish_task call after it has already
+                        # proven that the goal is satisfied.
+                        if (
+                            result.get("success")
+                            and session.goal_is_verified()
+                        ):
+                            answer = _finish_answer({
+                                "success": True,
+                                "data": {
+                                    "status": "verified",
+                                    "evidence": (
+                                        data.get("evidence") or ""
+                                    ),
+                                },
+                            })
+                            stop_reason = "verified"
+                            session.set_goal_status(
+                                "completed",
+                                "Goal verified successfully.",
+                            )
+                            break
+
                     if function_name in ("plan_task", "update_task_plan"):
                         if result.get("success"):
                             data = result.get("data") or {}
