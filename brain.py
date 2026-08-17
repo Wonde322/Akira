@@ -767,7 +767,6 @@ def ask(message, session_id=None):
     answer = None
 
     client = _ensure_client()
-    task_active = False
     task_began_here = False
     last_tool_action = None
     stop_reason = None
@@ -838,13 +837,12 @@ def ask(message, session_id=None):
         for tool_call in assistant_message.tool_calls:
             function_name = tool_call.function.name
 
-            if function_name in COMPUTER_USE_TOOLS and not task_active:
+            if function_name in COMPUTER_USE_TOOLS and session.task is None:
                 session.begin_task(message)
                 session.transition(
                     "planning",
                     "computer-use task started",
                 )
-                task_active = True
                 task_began_here = True
 
                 # Once the request becomes a computer-use task, replace the
@@ -877,7 +875,7 @@ def ask(message, session_id=None):
                 # сопоставить фактическое состояние с целью через
                 # verify_goal.
                 if (
-                    task_active
+                    session.task is not None
                     and session.task
                     and not session.goal_is_verified()
                 ):
@@ -978,7 +976,7 @@ def ask(message, session_id=None):
                 # --------------------------------------------------------
 
                 if (
-                    task_active
+                    session.task is not None
                     and session.task
                     and function_name == "discover_capability"
                     and result.get("success")
@@ -1020,7 +1018,7 @@ def ask(message, session_id=None):
                 # её к текущей Session.
                 # --------------------------------------------------------
 
-                if task_active and session.task:
+                if session.task is not None:
 
                     if (
                         function_name == "verify_goal"
@@ -1126,7 +1124,7 @@ def ask(message, session_id=None):
             result_text = _tool_result_text(result)
 
             # Передаём reasoning следующему шагу компактное состояние плана.
-            if task_active and session.task:
+            if session.task is not None:
                 task = session.task
                 current = session.current_plan_step()
 
@@ -1222,7 +1220,7 @@ def ask(message, session_id=None):
                     )
 
             if (
-                task_active
+                session.task is not None
                 and result.get("error")
                 and should_force_observe(
                     function_name,
@@ -1233,7 +1231,7 @@ def ask(message, session_id=None):
                     f"tool requested recovery observe: {function_name}",
                 )
 
-            if task_active and result.get("error") in ("denied", "blocked"):
+            if session.task is not None and result.get("error") in ("denied", "blocked"):
                 if session.task is not None:
                     session.transition(
                         "permission",
