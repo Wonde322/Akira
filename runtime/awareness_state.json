@@ -1,0 +1,21 @@
+{
+  "enabled": true,
+  "last_fingerprint": "52654ad5f9b2ece0c4154ba31d2359334a5f9c9aafbb11140db10c2d38639882",
+  "last_state": {
+    "screen": {
+      "x": 0,
+      "y": 0,
+      "width": 1440,
+      "height": 900
+    },
+    "ui": {
+      "frontmost_app": "Google Chrome",
+      "window_title": "(876) Обзор Abiotic Factor. Лучшая игра 2025 года - YouTube: воспроизводится аудио - Google Chrome"
+    },
+    "screenshot_path": "/Users/wonde/Akira/logs/screenshots/screen-20260816-084826.png"
+  },
+  "sample_count": 1,
+  "change_count": 0,
+  "last_sample": "2026-08-16T08:48:30+04:00",
+  "last_change": null
+}
