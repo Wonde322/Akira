@@ -869,6 +869,29 @@ def ask(message, session_id=None):
             task_active=(session.task is not None),
         )
 
+        # If the tool router has selected computer-use capabilities,
+        # establish the computer task BEFORE the first LLM reasoning turn.
+        # This ensures the first tool-selection decision receives the
+        # compact computer-use prompt instead of the general assistant prompt.
+        if (
+            session.task is None
+            and active_tools
+            and any(
+                tool.get("function", {}).get("name")
+                in COMPUTER_USE_TOOLS
+                for tool in active_tools
+            )
+        ):
+            session.begin_task(message)
+            session.transition(
+                "planning",
+                "computer-use task detected by tool router",
+            )
+            task_began_here = True
+
+            if messages and messages[0].get("role") == "system":
+                messages[0]["content"] = COMPUTER_USE_SYSTEM_PROMPT
+
         response = client.chat.completions.create(
             model=MODEL,
             messages=messages,
@@ -925,22 +948,6 @@ def ask(message, session_id=None):
 
         for tool_call in assistant_message.tool_calls:
             function_name = tool_call.function.name
-
-            if function_name in COMPUTER_USE_TOOLS and session.task is None:
-                session.begin_task(message)
-                session.transition(
-                    "planning",
-                    "computer-use task started",
-                )
-                task_began_here = True
-
-                # Once the request becomes a computer-use task, replace the
-                # general assistant prompt with the compact execution prompt.
-                # This keeps the first routing decision general, but prevents
-                # repeating memory/planning/background instructions on every
-                # subsequent GUI reasoning turn.
-                if messages and messages[0].get("role") == "system":
-                    messages[0]["content"] = COMPUTER_USE_SYSTEM_PROMPT
 
             if function_name == "finish_task":
 
