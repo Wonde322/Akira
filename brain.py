@@ -869,28 +869,20 @@ def ask(message, session_id=None):
             task_active=(session.task is not None),
         )
 
-        # If the tool router has selected computer-use capabilities,
-        # establish the computer task BEFORE the first LLM reasoning turn.
-        # This ensures the first tool-selection decision receives the
-        # compact computer-use prompt instead of the general assistant prompt.
+        # Router selection only determines the reasoning prompt.
+        # A real computer-use task starts when the model actually requests
+        # a computer-use tool.
         if (
             session.task is None
             and active_tools
             and any(
-                tool.get("function", {}).get("name")
-                in COMPUTER_USE_TOOLS
+                tool.get("function", {}).get("name") in COMPUTER_USE_TOOLS
                 for tool in active_tools
             )
+            and messages
+            and messages[0].get("role") == "system"
         ):
-            session.begin_task(message)
-            session.transition(
-                "planning",
-                "computer-use task detected by tool router",
-            )
-            task_began_here = True
-
-            if messages and messages[0].get("role") == "system":
-                messages[0]["content"] = COMPUTER_USE_SYSTEM_PROMPT
+            messages[0]["content"] = COMPUTER_USE_SYSTEM_PROMPT
 
         response = client.chat.completions.create(
             model=MODEL,
@@ -949,6 +941,19 @@ def ask(message, session_id=None):
         for tool_call in assistant_message.tool_calls:
             function_name = tool_call.function.name
 
+            # Start computer-use state only when the model actually
+            # requests a computer-use capability.
+            if (
+                function_name in COMPUTER_USE_TOOLS
+                and session.task is None
+            ):
+                session.begin_task(message)
+                session.transition(
+                    "planning",
+                    "computer-use tool requested",
+                )
+                task_began_here = True
+
             if function_name == "finish_task":
 
                 # Сначала всегда получаем свежий observe после последнего
@@ -965,43 +970,6 @@ def ask(message, session_id=None):
                     )
                     observed_this_turn = True
                     session.mark_observed()
-                    continue
-
-                # Одного observe недостаточно: модель должна явно
-                # сопоставить фактическое состояние с целью через
-                # verify_goal.
-                if (
-                    session.task is not None
-                    and session.task
-                    and not session.goal_is_verified()
-                ):
-                    result = {
-                        "success": False,
-                        "error": "goal_not_verified",
-                        "output": (
-                            "Нельзя завершить задачу: цель не прошла "
-                            "semantic verification. Используй verify_goal "
-                            "после анализа свежего observe."
-                        ),
-                    }
-
-                    record_tool_execution(
-                        "finish_task",
-                        {},
-                        result,
-                        "auto",
-                        source=source,
-                        **_task_kwargs(session, "finish_task"),
-                    )
-
-                    tool_message = {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": _tool_result_text(result),
-                    }
-
-                    messages.append(tool_message)
-                    turn_messages.append(tool_message)
                     continue
 
                 arguments, parse_error = _parse_arguments(tool_call)
@@ -1448,7 +1416,7 @@ def ask(message, session_id=None):
     if answer is None:
         answer = "Достигнут лимит шагов обработки запроса."
 
-    if task_began_here or (task_active and stop_reason):
+    if task_began_here or (session.task is not None and stop_reason):
         if session.task is not None and stop_reason:
             terminal_phase = {
                 "verified": "done",

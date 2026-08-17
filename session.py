@@ -136,9 +136,9 @@ class Session:
 
         if previous != phase:
             transitions = {
-                "planning": {"planning", "observing", "acting", "failed"},
-                "observing": {"observing", "acting", "verifying", "recovering", "failed"},
-                "acting": {"acting", "observing", "verifying", "recovering", "failed"},
+                "planning": {"planning", "observing", "acting", "recovering", "failed"},
+                "observing": {"observing", "acting", "verifying", "recovering", "permission", "done", "failed"},
+                "acting": {"acting", "observing", "verifying", "recovering", "done", "failed"},
                 "verifying": {"verifying", "done", "observing", "recovering", "failed"},
                 "recovering": {"recovering", "planning", "observing", "acting", "failed"},
                 "done": {"done"},
@@ -497,12 +497,14 @@ class Session:
         previous = task["last_observation"]
         previous_hash = previous.get("hash") if previous else None
 
-        if observation.hash and observation.hash == previous_hash:
-            # Same observation: no new state appeared.
-            task["no_progress_count"] += 1
+        if observation.hash:
+            if previous is None:
+                task["no_progress_count"] = 1
+            elif observation.hash == previous_hash:
+                task["no_progress_count"] += 1
+            else:
+                task["no_progress_count"] = 0
         else:
-            # A different observation means progress, including the first
-            # hashed observation.
             task["no_progress_count"] = 0
 
         task["last_observation"] = observation.to_dict()

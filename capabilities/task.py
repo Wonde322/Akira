@@ -134,16 +134,23 @@ def verify_goal(status, evidence=""):
     }
 
 
-def finish_task():
-    """Validate the terminal task action.
+def finish_task(result=""):
+    """Validate the terminal task action."""
 
-    Brain performs the actual semantic verification and owns task state.
-    This capability only provides the terminal execution primitive.
-    """
+    result = str(result or "").strip()
+
+    if not result:
+        return {
+            "success": False,
+            "error": "invalid_result",
+            "output": "Для завершения задачи необходимо указать result.",
+        }
+
     return {
         "success": True,
         "data": {
-            "operation": "finish",
+            "finished": True,
+            "result": result,
         },
         "output": "Задача завершена.",
     }
