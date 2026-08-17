@@ -1284,11 +1284,7 @@ def ask(message, session_id=None):
                 )
 
                 if recovery.get("failed"):
-                    session.register_recovery()
-                    session.transition(
-                        "recovering",
-                        recovery.get("reason") or "tool failure",
-                    )
+                    session.begin_recovery(recovery)
                 else:
                     session.clear_recovery()
 

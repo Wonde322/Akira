@@ -78,15 +78,24 @@ class Session:
         self.task = None
 
     def require_observation(self, reason=None):
-        """Marks the task as requiring a fresh observation."""
+        """Marks the task as requiring a fresh observation.
+
+        Recovery remains the authoritative phase while waiting for the
+        observation. A fresh observation itself transitions back to acting.
+        """
         if self.task is None:
             return
 
         self.task["pending_observe"] = True
-        self.transition(
-            "observing",
-            reason or "fresh observation required",
-        )
+
+        # Do not destroy RECOVERING by immediately changing it to OBSERVING.
+        # The recovery decision remains visible in task state until the
+        # observation that executes that recovery cycle arrives.
+        if self.task.get("phase") != "recovering":
+            self.transition(
+                "observing",
+                reason or "fresh observation required",
+            )
 
     def mark_observed(self):
         """Clears the pending-observation requirement."""
@@ -230,6 +239,29 @@ class Session:
 
         self.task["recovery_context"] = None
         self.task["recovery_tools"] = []
+
+    def begin_recovery(self, recovery):
+        """Stores a recovery decision and enters the recovery phase."""
+        if self.task is None:
+            return
+
+        recovery = recovery if isinstance(recovery, dict) else {}
+
+        self.task["recovery_context"] = recovery
+        self.task["recovery_tools"] = list(
+            recovery.get("fallback_tools") or []
+        )
+
+        self.task["recovery_count"] += 1
+
+        self.transition(
+            "recovering",
+            recovery.get("reason") or "tool failure",
+        )
+
+        self.require_observation(
+            "recovery requires a fresh observation",
+        )
 
     def set_plan(self, steps):
         """Устанавливает/заменяет план текущей задачи."""
