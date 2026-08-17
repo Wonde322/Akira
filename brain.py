@@ -859,7 +859,10 @@ def ask(message, session_id=None):
 
                 # Сначала всегда получаем свежий observe после последнего
                 # state-changing действия.
-                if pending_observe:
+                if (
+                    session.task is not None
+                    and session.observation_required()
+                ):
                     _inject_observation(
                         session,
                         messages,
@@ -867,7 +870,7 @@ def ask(message, session_id=None):
                         source,
                     )
                     observed_this_turn = True
-                    pending_observe = False
+                    session.mark_observed()
                     continue
 
                 # Одного observe недостаточно: модель должна явно
