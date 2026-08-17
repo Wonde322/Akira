@@ -1022,10 +1022,49 @@ def ask(message, session_id=None):
                 session.mark_observed()
 
                 if session.task is not None:
-                    session.transition(
-                        "acting",
-                        "fresh observation available",
-                    )
+                    if session.observation_requires_recovery():
+                        session.begin_recovery({
+                            "failed": True,
+                            "action": (
+                                session.task.get(
+                                    "last_action",
+                                )
+                            ),
+                            "reason": (
+                                "Recovery produced repeated identical "
+                                "observations."
+                            ),
+                            "fallback_tools": (
+                                session.task.get(
+                                    "recovery_tools",
+                                    [],
+                                )
+                            ),
+                            "avoid_same_action": True,
+                            "force_observe": False,
+                        })
+
+                        if session.recovery_exhausted(limit=4):
+                            session.set_goal_status(
+                                "failed",
+                                "Recovery produced no new state.",
+                            )
+                            session.transition(
+                                "failed",
+                                "recovery produced no progress",
+                            )
+                            stop_reason = "recovery_exhausted"
+                            answer = (
+                                "Задача остановлена: recovery не изменяет "
+                                "состояние системы."
+                            )
+                            break
+
+                    else:
+                        session.transition(
+                            "acting",
+                            "fresh observation available",
+                        )
 
                 continue
 

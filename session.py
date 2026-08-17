@@ -187,6 +187,16 @@ class Session:
 
         return False
 
+    def observation_requires_recovery(self, threshold=2):
+        """Whether repeated identical observations indicate stuck recovery."""
+        if self.task is None:
+            return False
+
+        if self.task.get("phase") != "recovering":
+            return False
+
+        return self.task.get("no_progress_count", 0) >= threshold
+
     def recovery_exhausted(self, limit=4):
         """Whether repeated recovery attempts should terminate the task."""
         if self.task is None:
