@@ -26,6 +26,7 @@ class Session:
             "goal": goal,
             "phase": "planning",
             "phase_history": [],
+            "pending_observe": False,
             "step": 0,
             "last_observation": None,
             "last_action": None,
@@ -75,6 +76,31 @@ class Session:
     def end_task(self):
         """Завершает текущую задачу и очищает состояние."""
         self.task = None
+
+    def require_observation(self, reason=None):
+        """Marks the task as requiring a fresh observation."""
+        if self.task is None:
+            return
+
+        self.task["pending_observe"] = True
+        self.transition(
+            "observing",
+            reason or "fresh observation required",
+        )
+
+    def mark_observed(self):
+        """Clears the pending-observation requirement."""
+        if self.task is None:
+            return
+
+        self.task["pending_observe"] = False
+
+    def observation_required(self):
+        """Whether a fresh observation is required before continuing."""
+        return bool(
+            self.task is not None
+            and self.task.get("pending_observe")
+        )
 
     def transition(self, phase, reason=None):
         """Переводит computer-use task в единое execution state."""

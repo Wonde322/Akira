@@ -833,7 +833,6 @@ def ask(message, session_id=None):
 
         any_state_change = False
         observed_this_turn = False
-        pending_observe = False
         stop_reason = None
 
         for tool_call in assistant_message.tool_calls:
@@ -930,7 +929,7 @@ def ask(message, session_id=None):
             if function_name == "observe":
                 _inject_observation(session, messages, turn_messages, source)
                 observed_this_turn = True
-                pending_observe = False
+                session.mark_observed()
 
                 if session.task is not None:
                     session.transition(
@@ -1138,6 +1137,7 @@ def ask(message, session_id=None):
                     "failed_steps": task.get("plan_failed", []),
                     "recovery_count": task.get("recovery_count", 0),
                     "phase": task.get("phase", "planning"),
+                    "pending_observe": task.get("pending_observe", False),
                     "goal_status": task.get("goal_status", "in_progress"),
                     "last_result": task.get("last_result"),
                     "discovered_tools": task.get(
@@ -1201,7 +1201,9 @@ def ask(message, session_id=None):
 
             if function_name in STATE_CHANGING_TOOLS:
                 any_state_change = True
-                pending_observe = True
+                session.require_observation(
+                    f"state-changing action: {function_name}",
+                )
                 session.register_action(function_name, arguments)
 
                 # Любое изменение состояния инвалидирует старую
@@ -1224,7 +1226,9 @@ def ask(message, session_id=None):
                     result,
                 )
             ):
-                pending_observe = True
+                session.require_observation(
+                    f"tool requested recovery observe: {function_name}",
+                )
 
             if task_active and result.get("error") in ("denied", "blocked"):
                 if session.task is not None:
@@ -1256,8 +1260,13 @@ def ask(message, session_id=None):
         if stop_reason:
             break
 
-        if any_state_change and not observed_this_turn:
+        if (
+            session.task is not None
+            and session.observation_required()
+            and not observed_this_turn
+        ):
             _inject_observation(session, messages, turn_messages, source)
+            session.mark_observed()
 
         stop_reason, stop_text = _should_stop(session)
 
