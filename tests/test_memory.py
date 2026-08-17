@@ -7,12 +7,27 @@ import pytest
 def test_missing_memory_file_returns_the_documented_base_schema(isolated_project):
     memory = isolated_project("memory")
 
-    assert memory.load_memory() == {
-        "goals": [],
-        "tasks": [],
-        "events": [],
-        "activity": [],
+    loaded = memory.load_memory()
+
+    assert set(loaded) == {
+        "goals",
+        "tasks",
+        "events",
+        "activity",
+        "facts",
+        "preferences",
+        "episodes",
+        "procedures",
     }
+
+    assert loaded["goals"] == []
+    assert loaded["tasks"] == []
+    assert loaded["events"] == []
+    assert loaded["activity"] == []
+    assert loaded["facts"] == []
+    assert loaded["preferences"] == []
+    assert loaded["episodes"] == []
+    assert loaded["procedures"] == []
 
 
 def test_memory_operations_preserve_existing_record_shapes(isolated_project, tmp_path):
@@ -25,7 +40,16 @@ def test_memory_operations_preserve_existing_record_shapes(isolated_project, tmp
 
     stored = json.loads((tmp_path / "memory.json").read_text(encoding="utf-8"))
 
-    assert set(stored) == {"goals", "tasks", "events", "activity"}
+    assert set(stored) == {
+        "goals",
+        "tasks",
+        "events",
+        "activity",
+        "facts",
+        "preferences",
+        "episodes",
+        "procedures",
+    }
     assert set(stored["goals"][0]) == {"text", "created"}
     assert stored["goals"][0]["text"] == "Закончить проект"
     assert set(stored["tasks"][0]) == {

@@ -98,32 +98,8 @@ _client_lock = threading.Lock()
 
 
 def _get_groq_api_key():
-    """Получает Groq API key из environment или macOS Keychain."""
-    key = os.environ.get(GROQ_API_KEY_ENV)
-    if key:
-        return key
-
-    try:
-        result = subprocess.run(
-            [
-                "security",
-                "find-generic-password",
-                "-a",
-                os.environ.get("USER", ""),
-                "-s",
-                "Akira-Groq-API-Key",
-                "-w",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-
-    key = result.stdout.strip()
-    return key or None
+    """Получает Groq API key только из environment."""
+    return os.environ.get(GROQ_API_KEY_ENV)
 
 
 def create_groq_client():
@@ -140,7 +116,11 @@ def create_groq_client():
             if _client is None:
                 from groq import Groq
 
-                _client = Groq(api_key=_get_groq_api_key())
+                api_key = _get_groq_api_key()
+                if not api_key:
+                    raise KeyError(GROQ_API_KEY_ENV)
+
+                _client = Groq(api_key=api_key)
 
     return _client
 

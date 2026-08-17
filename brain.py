@@ -372,37 +372,8 @@ def _execute(function_name, arguments):
 
     if is_structured(output):
 
-        if isinstance(
-            output,
-            dict,
-        ):
-
-            output.setdefault(
-                "requested_tool",
-                function_name,
-            )
-
-            output.setdefault(
-                "resolved_tool",
-                resolved_name,
-            )
-
-            if capability_resolution is not None:
-
-                output.setdefault(
-                    "capability",
-                    capability_resolution.get(
-                        "capability"
-                    ),
-                )
-
-                output.setdefault(
-                    "capability_modality",
-                    capability_resolution.get(
-                        "modality"
-                    ),
-                )
-
+        # Structured tool results are already the canonical result.
+        # Do not mutate them by injecting execution metadata.
         return output, decision
 
     # --------------------------------------------------------
@@ -816,6 +787,9 @@ def _tools_for_reasoning(session, query, task_active):
 
     return tools
 
+
+# Backward-compatible public alias; registry remains the source of truth.
+TOOLS = get_tool_schemas()
 
 def ask(message, session_id=None):
     """Обрабатывает запрос пользователя в рамках указанной сессии.

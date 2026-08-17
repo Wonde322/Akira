@@ -279,13 +279,13 @@ TOOL_REGISTRY = (
         "open",
         "Универсально открывает приложение, URL или файл на Mac: open(target='Google Chrome'), open(target='https://youtube.com'), open(target='/path').",
         _parameters({"target": {"type": "string", "description": "Имя приложения, URL или абсолютный путь."}}, ["target"]),
-        "capabilities.apps", "open_target", "auto",
+        "capabilities.apps", "open_target", "confirm",
     ),
     ToolDefinition(
         "close",
         "Закрывает приложение на Mac по имени или пути к .app.",
         _parameters({"target": {"type": "string", "description": "Имя приложения или путь к .app."}}, ["target"]),
-        "capabilities.apps", "close_target", "auto",
+        "capabilities.apps", "close_target", "confirm",
     ),
     ToolDefinition(
         "find",
@@ -384,7 +384,7 @@ TOOL_REGISTRY = (
         "key",
         "Отправляет клавиатурную комбинацию на Mac, например 'command+shift+4' или 'return'.",
         _parameters({"keys": {"type": "string", "description": "Комбинация клавиш через + или пробел."}}, ["keys"]),
-        "capabilities.key", "key", "auto",
+        "capabilities.key", "key", "confirm",
     ),
     ToolDefinition(
         "select",
@@ -393,7 +393,7 @@ TOOL_REGISTRY = (
             "x": {"type": "number", "description": "Координата x."},
             "y": {"type": "number", "description": "Координата y."},
         }, ["x", "y"]),
-        "capabilities.gui", "select", "auto",
+        "capabilities.gui", "select", "confirm",
     ),
     ToolDefinition(
         "click",
@@ -404,7 +404,7 @@ TOOL_REGISTRY = (
             "button": {"type": "string", "enum": ["left", "right", "middle"], "description": "Кнопка мыши."},
             "clicks": {"type": "integer", "description": "Количество кликов (1-10)."},
         }, ["x", "y"]),
-        "capabilities.gui", "click", "auto",
+        "capabilities.gui", "click", "confirm",
     ),
     ToolDefinition(
         "type",
@@ -413,7 +413,7 @@ TOOL_REGISTRY = (
             "text": {"type": "string", "description": "Текст для ввода."},
             "target": {"type": "string", "description": "Имя приложения, в которое печатать (например, frontmost_app из последнего observe)."},
         }, ["text"]),
-        "capabilities.gui", "type_text", "auto",
+        "capabilities.gui", "type_text", "confirm",
     ),
     ToolDefinition(
         "scroll",
@@ -424,7 +424,7 @@ TOOL_REGISTRY = (
             "direction": {"type": "string", "enum": ["up", "down", "left", "right"], "description": "Направление прокрутки."},
             "amount": {"type": "integer", "description": "Величина прокрутки (1-50)."},
         }),
-        "capabilities.gui", "scroll", "auto",
+        "capabilities.gui", "scroll", "confirm",
     ),
     ToolDefinition(
         "drag",
@@ -437,7 +437,7 @@ TOOL_REGISTRY = (
             "duration": {"type": "number", "description": "Длительность в секундах (0-5)."},
             "button": {"type": "string", "enum": ["left", "right", "middle"], "description": "Кнопка мыши."},
         }, ["x1", "y1", "x2", "y2"]),
-        "capabilities.gui", "drag", "auto",
+        "capabilities.gui", "drag", "confirm",
     ),
     ToolDefinition(
         "verify_goal",
