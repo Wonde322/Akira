@@ -949,6 +949,26 @@ def ask(message, session_id=None):
                         "observe requested",
                     )
                 elif function_name == "verify_goal":
+                    if session.observation_required():
+                        result = {
+                            "success": False,
+                            "error": "verification_requires_observe",
+                            "output": (
+                                "Нельзя выполнять verify_goal до свежего "
+                                "observe после последнего изменения состояния."
+                            ),
+                        }
+
+                        tool_message = {
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": _tool_result_text(result),
+                        }
+
+                        messages.append(tool_message)
+                        turn_messages.append(tool_message)
+                        continue
+
                     session.transition(
                         "verifying",
                         "goal verification requested",
