@@ -841,6 +841,10 @@ def ask(message, session_id=None):
 
             if function_name in COMPUTER_USE_TOOLS and not task_active:
                 session.begin_task(message)
+                session.transition(
+                    "planning",
+                    "computer-use task started",
+                )
                 task_active = True
                 task_began_here = True
 
@@ -927,9 +931,33 @@ def ask(message, session_id=None):
                 _inject_observation(session, messages, turn_messages, source)
                 observed_this_turn = True
                 pending_observe = False
+
+                if session.task is not None:
+                    session.transition(
+                        "acting",
+                        "fresh observation available",
+                    )
+
                 continue
 
             arguments, parse_error = _parse_arguments(tool_call)
+
+            if session.task is not None:
+                if function_name == "observe":
+                    session.transition(
+                        "observing",
+                        "observe requested",
+                    )
+                elif function_name == "verify_goal":
+                    session.transition(
+                        "verifying",
+                        "goal verification requested",
+                    )
+                elif function_name in STATE_CHANGING_TOOLS:
+                    session.transition(
+                        "acting",
+                        f"state-changing action: {function_name}",
+                    )
 
             if parse_error:
                 result = _invalid_arguments_result(function_name, parse_error)
@@ -1035,6 +1063,10 @@ def ask(message, session_id=None):
                             session.set_goal_status(
                                 "completed",
                                 "Goal verified successfully.",
+                            )
+                            session.transition(
+                                "done",
+                                "goal verified successfully",
                             )
                             break
 
@@ -1159,6 +1191,10 @@ def ask(message, session_id=None):
 
                 if recovery.get("failed"):
                     session.register_recovery()
+                    session.transition(
+                        "recovering",
+                        recovery.get("reason") or "tool failure",
+                    )
                 else:
                     session.clear_recovery()
 
@@ -1174,6 +1210,10 @@ def ask(message, session_id=None):
                         "unverified",
                         "Состояние изменилось после предыдущей проверки.",
                     )
+                    session.transition(
+                        "observing",
+                        f"verification invalidated by {function_name}",
+                    )
 
             if (
                 task_active
@@ -1186,6 +1226,11 @@ def ask(message, session_id=None):
                 pending_observe = True
 
             if task_active and result.get("error") in ("denied", "blocked"):
+                if session.task is not None:
+                    session.transition(
+                        "permission",
+                        result.get("error"),
+                    )
                 stop_reason = "permission"
                 answer = result.get("output") or _tool_result_text(result)
                 break
@@ -1223,6 +1268,21 @@ def ask(message, session_id=None):
         answer = "Достигнут лимит шагов обработки запроса."
 
     if task_began_here or (task_active and stop_reason):
+        if session.task is not None and stop_reason:
+            terminal_phase = {
+                "verified": "done",
+                "finished": "done",
+                "permission": "permission",
+                "retry": "recovering",
+                "no_tool_progress": "failed",
+            }.get(stop_reason)
+
+            if terminal_phase:
+                session.transition(
+                    terminal_phase,
+                    f"loop stopped: {stop_reason}",
+                )
+
         session.end_task()
 
     # Сохраняем ограниченную запись хода: длинный tool-loop не должен

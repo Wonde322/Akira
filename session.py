@@ -24,6 +24,8 @@ class Session:
         """Начинает computer-use задачу. Никаких байтов изображений."""
         self.task = {
             "goal": goal,
+            "phase": "planning",
+            "phase_history": [],
             "step": 0,
             "last_observation": None,
             "last_action": None,
@@ -73,6 +75,38 @@ class Session:
     def end_task(self):
         """Завершает текущую задачу и очищает состояние."""
         self.task = None
+
+    def transition(self, phase, reason=None):
+        """Переводит computer-use task в единое execution state."""
+        if self.task is None:
+            return
+
+        phase = str(phase or "").strip().lower()
+
+        allowed = {
+            "planning",
+            "observing",
+            "acting",
+            "verifying",
+            "recovering",
+            "done",
+            "failed",
+            "permission",
+        }
+
+        if phase not in allowed:
+            raise ValueError(f"Unknown task phase: {phase}")
+
+        previous = self.task.get("phase")
+
+        if previous != phase:
+            self.task["phase"] = phase
+            self.task["phase_history"].append({
+                "from": previous,
+                "to": phase,
+                "reason": str(reason or "")[:500],
+            })
+            self.task["phase_history"] = self.task["phase_history"][-20:]
 
     def register_action(self, action, arguments=None):
         """Фиксирует state-changing действие."""
