@@ -448,10 +448,11 @@ class Session:
         previous_hash = previous.get("hash") if previous else None
 
         if observation.hash and observation.hash == previous_hash:
+            # Same observation: no new state appeared.
             task["no_progress_count"] += 1
-        elif observation.hash:
-            task["no_progress_count"] = 1
         else:
+            # A different observation means progress, including the first
+            # hashed observation.
             task["no_progress_count"] = 0
 
         task["last_observation"] = observation.to_dict()
