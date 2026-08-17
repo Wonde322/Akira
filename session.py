@@ -510,28 +510,33 @@ class Session:
         task["last_observation"] = observation.to_dict()
 
     def trim(self):
-        """Обрезает историю, не разрывая пары assistant→tool.
-
-        Гарантирует, что история (если непуста) начинается с сообщения
-        role="user", а сообщения assistant с tool_calls всегда сопровождаются
-        своими tool-ответами. Это защищает следующий ход модели от контекста
-        без user-запроса или с оборванной парой tool_calls→tool.
-        """
+        """Обрезает историю, сохраняя границу текущего user turn."""
         if len(self.history) <= self.max_history:
             return
 
         messages = self.history[-self.max_history:]
 
-        while messages and messages[0]["role"] == "tool":
+        # Если окно полностью попало внутрь длинного tool-loop,
+        # обычное trimming не должно удалить исходный user.
+        if not any(message.get("role") == "user" for message in messages):
+            user_index = None
+
+            for index in range(len(self.history) - 1, -1, -1):
+                if self.history[index].get("role") == "user":
+                    user_index = index
+                    break
+
+            if user_index is not None:
+                # Текущий user turn сохраняем целиком даже если он
+                # временно превышает MAX_HISTORY.
+                messages = self.history[user_index:]
+
+        # Не оставляем orphan tool messages / assistant tool_calls
+        # перед границей user.
+        while messages and messages[0].get("role") == "tool":
             messages.pop(0)
 
-        # Двигаемся вперёд до границы turn (user), отбрасывая осиротевшие
-        # assistant-сообщения вместе с их tool-ответами.
-        while messages and messages[0]["role"] != "user":
-            message = messages.pop(0)
-
-            if message["role"] == "assistant" and message.get("tool_calls"):
-                while messages and messages[0]["role"] == "tool":
-                    messages.pop(0)
+        while messages and messages[0].get("role") != "user":
+            messages.pop(0)
 
         self.history[:] = messages

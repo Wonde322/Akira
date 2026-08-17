@@ -955,6 +955,14 @@ def ask(message, session_id=None):
                 task_began_here = True
 
             if function_name == "finish_task":
+                if (
+                    session.task is not None
+                    and session.task.get("phase") == "observing"
+                ):
+                    session.transition(
+                        "acting",
+                        "finish task requested after completed observation",
+                    )
 
                 # Сначала всегда получаем свежий observe после последнего
                 # state-changing действия.
@@ -970,6 +978,13 @@ def ask(message, session_id=None):
                     )
                     observed_this_turn = True
                     session.mark_observed()
+
+                    if session.task is not None:
+                        session.transition(
+                            "acting",
+                            "fresh observation completed before finish",
+                        )
+
                     continue
 
                 arguments, parse_error = _parse_arguments(tool_call)
@@ -1080,6 +1095,14 @@ def ask(message, session_id=None):
                     session.transition(
                         "acting",
                         f"state-changing action: {function_name}",
+                    )
+                elif function_name == "finish_task":
+                    # finish_task is not itself state-changing, but it must
+                    # execute from the active/acting phase. An observe can
+                    # leave the session in observing until this transition.
+                    session.transition(
+                        "acting",
+                        "finish task requested",
                     )
 
             if parse_error:
@@ -1380,19 +1403,13 @@ def ask(message, session_id=None):
                 session.task is not None
                 and last_tool_action == (function_name, arguments)
             ):
-                # Повтор того же действия не считается причиной немедленно
-                # бросать всю задачу. Сначала даём модели шанс восстановиться:
-                # новый observe + другой маршрут. Жёсткая остановка происходит
-                # только после нескольких recovery-попыток.
                 session.register_recovery()
-
-                if session.task["recovery_count"] >= 4:
-                    stop_reason = "retry"
-                    answer = (
-                        "Задача остановлена: несколько попыток восстановления "
-                        "не дали нового результата."
-                    )
-                    break
+                stop_reason = "retry"
+                answer = (
+                    "Задача остановлена: обнаружено повторное действие "
+                    "без нового результата."
+                )
+                break
 
             last_tool_action = (function_name, arguments)
 
@@ -1425,6 +1442,7 @@ def ask(message, session_id=None):
                 "retry": "recovering",
                 "recovery_exhausted": "failed",
                 "no_tool_progress": "failed",
+                "no_progress": "failed",
             }.get(stop_reason)
 
             if terminal_phase:

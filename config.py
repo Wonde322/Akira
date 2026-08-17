@@ -64,7 +64,7 @@ TTS_VOICE = "Milena"
 # Computer-use loop
 COMPUTER_USE_MAX_STEPS = 100
 MAX_ACTIONS_WITHOUT_OBSERVE = 8
-NO_PROGRESS_LIMIT = 5
+NO_PROGRESS_LIMIT = 3
 MAX_OBSERVATION_HISTORY = 8
 
 # Инструменты, включающие computer-use режим, и state-changing (требуют observe).
