@@ -177,7 +177,8 @@ class Session:
         task = self.task
 
         # A successful action is evidence of progress.
-        if task.get("last_result", {}).get("success"):
+        last_result = task.get("last_result") or {}
+        if isinstance(last_result, dict) and last_result.get("success"):
             return True
 
         # A fresh observation that differs from the previous one is progress.
