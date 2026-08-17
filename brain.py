@@ -468,6 +468,23 @@ def _phase_allows_tool(session, function_name):
 
     phase = session.task.get("phase", "planning")
 
+    # Recovery invariant: never blindly repeat the failed action.
+    if session.recovery_requires_different_action(function_name):
+        return False, (
+            f"Recovery forbids repeating failed action "
+            f"'{function_name}'. Choose another capability."
+        )
+
+    # Recovery that explicitly requires a fresh observation may only execute
+    # observe until that observation has arrived.
+    if (
+        session.recovery_needs_observation()
+        and function_name != "observe"
+    ):
+        return False, (
+            "Recovery requires a fresh observe before another action."
+        )
+
     common = {
         "observe",
         "discover_capability",

@@ -232,6 +232,36 @@ class Session:
         else:
             self.clear_recovery()
 
+    def recovery_requires_different_action(self, action):
+        """Whether recovery forbids repeating the failed action."""
+        if self.task is None:
+            return False
+
+        recovery = self.task.get("recovery_context") or {}
+
+        if not recovery.get("failed"):
+            return False
+
+        if not recovery.get("avoid_same_action"):
+            return False
+
+        return str(action or "") == str(
+            recovery.get("action") or ""
+        )
+
+    def recovery_needs_observation(self):
+        """Whether recovery must obtain fresh screen state first."""
+        if self.task is None:
+            return False
+
+        recovery = self.task.get("recovery_context") or {}
+
+        return bool(
+            recovery.get("failed")
+            and recovery.get("force_observe")
+            and self.task.get("pending_observe")
+        )
+
     def clear_recovery(self):
         """Clears the current recovery recommendation."""
         if self.task is None:
