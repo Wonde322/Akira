@@ -469,9 +469,19 @@ class Session:
             {},
         )
 
+        if verification.get("status") != "verified":
+            return False
+
+        # A plan, when present, must be fully completed before the goal
+        # can be considered verified.
+        if self.task.get("plan"):
+            if not self.plan_is_complete():
+                return False
+
+        # Verification must correspond to the latest observation.
         return (
-            verification.get("status") == "verified"
-            and verification.get("observation_step") == self.task.get("step")
+            verification.get("observation_step")
+            == self.task.get("step")
         )
 
 
