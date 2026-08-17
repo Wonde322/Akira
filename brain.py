@@ -1137,6 +1137,7 @@ def ask(message, session_id=None):
                     "completed_steps": task.get("plan_completed", []),
                     "failed_steps": task.get("plan_failed", []),
                     "recovery_count": task.get("recovery_count", 0),
+                    "phase": task.get("phase", "planning"),
                     "goal_status": task.get("goal_status", "in_progress"),
                     "last_result": task.get("last_result"),
                     "discovered_tools": task.get(

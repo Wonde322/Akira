@@ -100,6 +100,23 @@ class Session:
         previous = self.task.get("phase")
 
         if previous != phase:
+            transitions = {
+                "planning": {"planning", "observing", "acting", "failed"},
+                "observing": {"observing", "acting", "verifying", "recovering", "failed"},
+                "acting": {"acting", "observing", "verifying", "recovering", "failed"},
+                "verifying": {"verifying", "done", "observing", "recovering", "failed"},
+                "recovering": {"recovering", "planning", "observing", "acting", "failed"},
+                "done": {"done"},
+                "failed": {"failed"},
+                "permission": {"permission", "failed"},
+            }
+
+            if phase not in transitions.get(previous, set()):
+                raise ValueError(
+                    f"Invalid task phase transition: "
+                    f"{previous} -> {phase}"
+                )
+
             self.task["phase"] = phase
             self.task["phase_history"].append({
                 "from": previous,
