@@ -461,8 +461,81 @@ def _task_kwargs(session, action):
     }
 
 
+def _phase_allows_tool(session, function_name):
+    """Проверяет, допустим ли tool в текущей execution phase."""
+    if session is None or session.task is None:
+        return True, None
+
+    phase = session.task.get("phase", "planning")
+
+    common = {
+        "observe",
+        "discover_capability",
+        "plan_task",
+        "update_task_plan",
+    }
+
+    computer_actions = set(COMPUTER_USE_TOOLS) - {
+        "observe",
+        "verify_goal",
+        "finish_task",
+    }
+
+    allowed = {
+        "planning": common,
+        "observing": {"observe"},
+        "acting": common | computer_actions | {
+            "verify_goal",
+            "finish_task",
+        },
+        "verifying": {"observe", "verify_goal"},
+        "recovering": common | computer_actions | {
+            "verify_goal",
+        },
+        "done": set(),
+        "failed": set(),
+        "permission": set(),
+    }
+
+    if function_name in allowed.get(phase, set()):
+        return True, None
+
+    return False, (
+        f"Tool '{function_name}' запрещён в phase='{phase}'. "
+        f"Сначала переведи задачу в подходящую фазу."
+    )
+
+
 def _execute_and_audit(function_name, arguments, source=None, session=None):
     """Выполняет инструмент и пишет audit (с полями задачи при наличии)."""
+
+    allowed, reason = _phase_allows_tool(
+        session,
+        function_name,
+    )
+
+    if not allowed:
+        result = {
+            "success": False,
+            "error": "phase_tool_blocked",
+            "output": reason,
+        }
+
+        record_tool_execution(
+            function_name,
+            arguments,
+            result,
+            "blocked_by_phase",
+            source=source,
+            **(
+                _task_kwargs(session, function_name)
+                if session is not None
+                else {}
+            ),
+        )
+
+        return result
+
     result, decision = _execute(function_name, arguments)
 
     record_tool_execution(
