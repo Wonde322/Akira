@@ -663,13 +663,21 @@ def _tools_for_reasoning(session, query, task_active):
         if task_active:
             pinned = list(COMPUTER_USE_TOOLS)
 
-    tools = select_tool_schemas(
-        query=routing_query,
-        schemas=ALL_TOOLS,
-        limit=12,
-        task_active=task_active,
-        pinned_tools=pinned,
-    )
+    if task_active:
+        allowed = set(COMPUTER_USE_TOOLS)
+        tools = [
+            schema
+            for schema in ALL_TOOLS
+            if schema.get("function", {}).get("name") in allowed
+        ]
+    else:
+        tools = select_tool_schemas(
+            query=routing_query,
+            schemas=ALL_TOOLS,
+            limit=12,
+            task_active=task_active,
+            pinned_tools=pinned,
+        )
 
     if session.task is not None:
         names = [
