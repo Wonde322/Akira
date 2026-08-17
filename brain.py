@@ -1302,6 +1302,22 @@ def ask(message, session_id=None):
 
                 if recovery.get("failed"):
                     session.begin_recovery(recovery)
+
+                    if session.recovery_exhausted(limit=4):
+                        session.set_goal_status(
+                            "failed",
+                            "Recovery exhausted without meaningful progress.",
+                        )
+                        session.transition(
+                            "failed",
+                            "recovery exhausted",
+                        )
+                        stop_reason = "recovery_exhausted"
+                        answer = (
+                            "Задача остановлена: recovery не дал "
+                            "нового прогресса после нескольких попыток."
+                        )
+                        break
                 else:
                     session.clear_recovery()
 
@@ -1390,6 +1406,7 @@ def ask(message, session_id=None):
                 "finished": "done",
                 "permission": "permission",
                 "retry": "recovering",
+                "recovery_exhausted": "failed",
                 "no_tool_progress": "failed",
             }.get(stop_reason)
 
