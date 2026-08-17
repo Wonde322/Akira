@@ -169,6 +169,33 @@ class Session:
         self.task["last_action_arguments"] = arguments
         self.task["actions_without_observe"] += 1
 
+    def recovery_has_progressed(self):
+        """Return whether the current recovery cycle produced new state."""
+        if self.task is None:
+            return True
+
+        task = self.task
+
+        # A successful action is evidence of progress.
+        if task.get("last_result", {}).get("success"):
+            return True
+
+        # A fresh observation that differs from the previous one is progress.
+        if task.get("no_progress_count", 0) == 0:
+            return True
+
+        return False
+
+    def recovery_exhausted(self, limit=4):
+        """Whether repeated recovery attempts should terminate the task."""
+        if self.task is None:
+            return False
+
+        return (
+            self.task.get("recovery_count", 0) >= limit
+            or self.task.get("no_progress_count", 0) >= limit
+        )
+
     def register_result(self, action, result):
         """Запоминает результат действия для следующего шага reasoning."""
         if self.task is None:
