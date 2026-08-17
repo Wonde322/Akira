@@ -686,10 +686,10 @@ def _tools_for_reasoning(session, query, task_active):
         # Active computer-use gets only the deterministic universal GUI
         # surface. Do not carry planning, memory, discovery, shell, or
         # unrelated application capabilities through every reasoning turn.
-        if task_active:
+        if session.task is not None:
             pinned = list(COMPUTER_USE_TOOLS)
 
-    if task_active:
+    if session.task is not None:
         allowed = set(COMPUTER_USE_TOOLS)
         tools = [
             schema
@@ -701,7 +701,7 @@ def _tools_for_reasoning(session, query, task_active):
             query=routing_query,
             schemas=ALL_TOOLS,
             limit=12,
-            task_active=task_active,
+            task_active=(session.task is not None),
             pinned_tools=pinned,
         )
 
@@ -777,7 +777,7 @@ def ask(message, session_id=None):
         active_tools = _tools_for_reasoning(
             session=session,
             query=message,
-            task_active=task_active,
+            task_active=(session.task is not None),
         )
 
         response = client.chat.completions.create(
@@ -790,7 +790,7 @@ def ask(message, session_id=None):
         assistant_message = response.choices[0].message
 
         if not assistant_message.tool_calls:
-            if task_active:
+            if session.task is not None:
                 no_tool_streak += 1
                 assistant_content = assistant_message.content or ""
 
@@ -1175,7 +1175,7 @@ def ask(message, session_id=None):
             # Любой результат действия становится частью состояния задачи.
             # Это позволяет следующему reasoning-шагу использовать не только
             # экран, но и историю неудачных/успешных попыток.
-            if task_active:
+            if session.task is not None:
                 session.register_result(function_name, result)
 
                 recovery = classify_failure(
