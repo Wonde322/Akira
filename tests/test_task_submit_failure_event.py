@@ -26,7 +26,10 @@ def test_submit_failure_emits_task_failed_with_provenance(tmp_path, monkeypatch)
 
     assert result["success"] is False
     assert result["status"] == "failed"
-    assert runtime.status(result["task_id"])["task"]["status"] == "failed"
+    task = runtime.status(result["task_id"])["task"]
+    assert task["status"] == "failed"
+    assert task["started_at"] is None
+    assert task["finished_at"] is not None
     assert events == [(
         "task.failed",
         {
