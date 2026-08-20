@@ -13,6 +13,7 @@ from context_triggers import ContextTriggerEngine
 from proactive_policy import get_proactive_reasoning_policy
 from proactive_action_proposals import get_proactive_action_proposer
 from proactive_attention_budget import get_proactive_attention_budget
+from proactive_orchestrator import get_proactive_orchestrator
 
 MAX_CAUSATION_DEPTH = 3
 MAX_COMPLETION_RESULT_CHARS = 1200
@@ -35,6 +36,7 @@ class ProactiveDecision:
     source: str = "policy"
     priority: str = "normal"
     proposals: list | None = None
+    source_task_id: str | None = None
 
     def to_dict(self):
         data = asdict(self)
@@ -46,7 +48,8 @@ class ProactiveRuntime:
     def __init__(self, dedupe_seconds=5.0, desktop_cooldown_seconds=30.0,
                  max_causation_depth=MAX_CAUSATION_DEPTH, clock=None, inbox=None,
                  context_rules=None, context_rule_store=None, reasoning_policy=None,
-                 action_proposer=None, lifecycle=None, attention_budget=None):
+                 action_proposer=None, lifecycle=None, attention_budget=None,
+                 orchestrator=None):
         self.dedupe_seconds = float(dedupe_seconds)
         self.desktop_cooldown_seconds = float(desktop_cooldown_seconds)
         self.max_causation_depth = int(max_causation_depth)
@@ -55,6 +58,7 @@ class ProactiveRuntime:
         self._reasoning_policy = reasoning_policy or get_proactive_reasoning_policy()
         self._action_proposer = action_proposer or get_proactive_action_proposer()
         self._attention_budget = attention_budget or get_proactive_attention_budget()
+        self._orchestrator = orchestrator or get_proactive_orchestrator()
         if lifecycle is None:
             from proactive_action_lifecycle import get_proactive_action_lifecycle
             lifecycle = get_proactive_action_lifecycle()
@@ -69,6 +73,7 @@ class ProactiveRuntime:
         self._recent = {}
         self._last_by_type = {}
         self._decisions = []
+        self._autonomous_sources = {}
 
     def _refresh_context_rules(self): self._context_triggers.set_rules(self._context_rule_store.active())
     def set_context_rules(self, rules):
@@ -112,7 +117,17 @@ class ProactiveRuntime:
         return f"Готово: {goal}\n\n{result}"
     @staticmethod
     def _is_proactive_session(payload): return str(payload.get("session_id") or "").startswith("proactive:")
+    def _release_autonomous(self, payload):
+        task_id = str(payload.get("task_id") or "")
+        if not task_id:
+            return
+        with self._lock:
+            source = self._autonomous_sources.pop(task_id, None)
+        if source:
+            self._orchestrator.release(source)
     def _update_lifecycle(self,event_type,payload):
+        if event_type in {"task.completed", "task.failed"}:
+            self._release_autonomous(payload)
         if not self._is_proactive_session(payload): return None
         task_id=payload.get("task_id")
         if not task_id:return None
@@ -125,6 +140,9 @@ class ProactiveRuntime:
         match=matches[0];rule=match["rule"];action=ProactiveAction.ASK_USER if rule["action"]=="ask_user" else ProactiveAction.NOTIFY
         return ProactiveDecision(action,"context_rule:"+rule["id"],notification=match["message"],source="context_trigger",priority=rule["priority"] if rule["priority"] in {"low","normal","high"} else "normal")
     def _pattern_decision(self,event_type,payload):
+        autonomous = self._orchestrator.decide(event_type, payload)
+        if autonomous.get("spawn"):
+            return ProactiveDecision(ProactiveAction.SPAWN_TASK, autonomous["reason"], goal=autonomous["goal"], source="autonomous_orchestration", priority="low", source_task_id=autonomous.get("task_id"))
         recommendation=self._reasoning_policy.decide(event_type,payload)
         if recommendation is not None:
             try:action=ProactiveAction(recommendation.action)
@@ -154,7 +172,7 @@ class ProactiveRuntime:
         if event_type=="task.completed":
             notify=bool(payload.get("notify"));proactive=self._is_proactive_session(payload)
             if notify or proactive:
-                goal=str(payload.get("goal") or "задача");reason="proactive_task_completed" if proactive and not notify else "background_task_completed"
+                reason="proactive_task_completed" if proactive and not notify else "background_task_completed"
                 return ProactiveDecision(ProactiveAction.NOTIFY,reason,notification=self._message_for_completion(payload))
         if event_type=="proactive.question":
             question=str(payload.get("question") or "").strip();return ProactiveDecision(ProactiveAction.ASK_USER,"explicit_question",notification=question,priority="high") if question else ProactiveDecision(ProactiveAction.IGNORE,"question_without_text")
@@ -183,7 +201,14 @@ class ProactiveRuntime:
         if decision.action!=ProactiveAction.SPAWN_TASK:return result
         from task_runtime import get_runtime
         correlation_id=event.get("correlation_id") or event.get("id");spawn_result=get_runtime().spawn(decision.goal,session_id="proactive:"+str(correlation_id));result["spawn"]=spawn_result
-        if spawn_result.get("success"):result["launched"].append({"task_id":spawn_result.get("task_id"),"reason":decision.reason})
+        if spawn_result.get("success"):
+            spawned_task_id = spawn_result.get("task_id")
+            result["launched"].append({"task_id":spawned_task_id,"reason":decision.reason})
+            if decision.source_task_id and spawned_task_id:
+                with self._lock:
+                    self._autonomous_sources[str(spawned_task_id)] = str(decision.source_task_id)
+        elif decision.source_task_id:
+            self._orchestrator.release(decision.source_task_id)
         return result
     def recent_decisions(self,limit=20):
         try:limit=int(limit)
