@@ -1,7 +1,8 @@
 """Desktop awareness runtime for Akira.
 
-Awareness samples cheap local desktop state and emits a structured change event.
-It deliberately does not send screenshots to an LLM by itself.
+Awareness samples cheap local desktop state and emits structured change and
+longer-term context-pattern events. It deliberately does not send screenshots
+to an LLM by itself.
 """
 from __future__ import annotations
 
@@ -14,8 +15,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 STATE_FILE = ROOT / "runtime" / "awareness_state.json"
 
+
 class AwarenessRuntime:
-    def __init__(self, enabled=True):
+    def __init__(self, enabled=True, pattern_engine=None):
         self.enabled = bool(enabled)
         self._lock = threading.RLock()
         self._last_fingerprint = None
@@ -24,6 +26,10 @@ class AwarenessRuntime:
         self._change_count = 0
         self._last_sample = None
         self._last_change = None
+        if pattern_engine is None:
+            from context_patterns import get_context_pattern_engine
+            pattern_engine = get_context_pattern_engine()
+        self._pattern_engine = pattern_engine
         self._load()
 
     def _load(self):
@@ -62,35 +68,54 @@ class AwarenessRuntime:
     def _changed_fields(previous, current):
         previous = previous if isinstance(previous, dict) else {}
         current = current if isinstance(current, dict) else {}
-        fields = []
-        for field in ("screen", "ui"):
-            if previous.get(field) != current.get(field):
-                fields.append(field)
-        return fields
+        return [field for field in ("screen", "ui") if previous.get(field) != current.get(field)]
+
+    @staticmethod
+    def _emit_patterns(insights, timestamp):
+        results = []
+        if not insights:
+            return results
+        try:
+            from event_bus import emit_event
+        except Exception as error:
+            return [{"success": False, "error": str(error)}]
+        for insight in insights:
+            payload = {key: value for key, value in insight.items() if key != "type"}
+            payload["timestamp"] = timestamp
+            try:
+                results.append(emit_event(insight["type"], payload, source="awareness.pattern"))
+            except Exception as error:
+                results.append({"success": False, "error": str(error)})
+        return results
 
     def sample(self):
         with self._lock:
             if not self.enabled:
                 return {"success": True, "enabled": False, "changed": False,
-                        "output": "Desktop awareness отключён."}
+                        "patterns": [], "output": "Desktop awareness отключён."}
         try:
             from capabilities.observe import capture_screenshot, screen_size, ui_metadata
             screenshot_path, error = capture_screenshot()
             if error:
                 return {"success": False, "error": "screenshot_error", "changed": False,
-                        "output": str(error)}
+                        "patterns": [], "output": str(error)}
             size_result = screen_size()
             screen = size_result.get("data") if size_result.get("success") else None
             ui = ui_metadata()
             state = {"screen": screen, "ui": ui, "screenshot_path": screenshot_path}
         except Exception as error:
             return {"success": False, "error": "awareness_sample_error", "changed": False,
-                    "output": str(error)}
+                    "patterns": [], "output": str(error)}
 
         fingerprint_state = {"screen": screen, "ui": ui}
         encoded = json.dumps(fingerprint_state, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
         fingerprint = hashlib.sha256(encoded).hexdigest()
         now = datetime.now().astimezone().isoformat(timespec="seconds")
+        try:
+            insights = list(self._pattern_engine.observe(ui))
+        except Exception:
+            insights = []
+        pattern_events = self._emit_patterns(insights, now)
 
         with self._lock:
             previous_fingerprint = self._last_fingerprint
@@ -109,7 +134,8 @@ class AwarenessRuntime:
 
         if first_sample:
             return {"success": True, "enabled": True, "changed": False, "baseline": True,
-                    "state": state, "output": "Desktop awareness baseline established."}
+                    "patterns": insights, "pattern_events": pattern_events, "state": state,
+                    "output": "Desktop awareness baseline established."}
 
         if changed:
             event_result = None
@@ -130,10 +156,12 @@ class AwarenessRuntime:
             except Exception as error:
                 event_result = {"success": False, "error": str(error)}
             return {"success": True, "enabled": True, "changed": True,
-                    "changed_fields": changed_fields, "state": state, "event": event_result,
+                    "changed_fields": changed_fields, "patterns": insights,
+                    "pattern_events": pattern_events, "state": state, "event": event_result,
                     "output": "Desktop state changed."}
 
-        return {"success": True, "enabled": True, "changed": False, "state": state,
+        return {"success": True, "enabled": True, "changed": False, "patterns": insights,
+                "pattern_events": pattern_events, "state": state,
                 "output": "Desktop state unchanged."}
 
     def state(self):
@@ -150,8 +178,10 @@ class AwarenessRuntime:
         return {"success": True, "enabled": self.enabled,
                 "output": "Desktop awareness " + ("включён." if self.enabled else "отключён.")}
 
+
 _awareness = None
 _awareness_lock = threading.Lock()
+
 
 def get_awareness():
     global _awareness
@@ -161,11 +191,14 @@ def get_awareness():
                 _awareness = AwarenessRuntime()
     return _awareness
 
+
 def awareness_sample():
     return get_awareness().sample()
 
+
 def awareness_state():
     return get_awareness().state()
+
 
 def awareness_enabled(enabled):
     return get_awareness().set_enabled(enabled)

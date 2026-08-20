@@ -75,12 +75,8 @@ class ProactiveRuntime:
     def add_context_rule(self, app=None, title=None, message=None, action="notify",
                          on_transition=True, priority="normal"):
         rule = self._context_rule_store.add({
-            "app": app,
-            "title": title,
-            "message": message,
-            "action": action,
-            "on_transition": on_transition,
-            "priority": priority,
+            "app": app, "title": title, "message": message, "action": action,
+            "on_transition": on_transition, "priority": priority,
         })
         with self._lock:
             self._refresh_context_rules()
@@ -141,6 +137,19 @@ class ProactiveRuntime:
                                  source="context_trigger",
                                  priority=rule["priority"] if rule["priority"] in {"low", "normal", "high"} else "normal")
 
+    @staticmethod
+    def _pattern_decision(event_type, payload):
+        message = str(payload.get("message") or "").strip()
+        if not message:
+            return None
+        if event_type == "desktop.context.dwell":
+            return ProactiveDecision(ProactiveAction.NOTIFY, "context_dwell", notification=message,
+                                     source="context_pattern", priority="low")
+        if event_type == "desktop.context.repeated":
+            return ProactiveDecision(ProactiveAction.NOTIFY, "context_repeated", notification=message,
+                                     source="context_pattern", priority="normal")
+        return None
+
     def decide(self, event, trigger_goals=None):
         trigger_goals = list(trigger_goals or [])
         event_type = str(event.get("type") or "")
@@ -180,6 +189,9 @@ class ProactiveRuntime:
             if question:
                 return ProactiveDecision(ProactiveAction.ASK_USER, "explicit_question", notification=question, priority="high")
             return ProactiveDecision(ProactiveAction.IGNORE, "question_without_text")
+        pattern = self._pattern_decision(event_type, payload)
+        if pattern is not None:
+            return pattern
         if event_type == "desktop.changed":
             contextual = self._context_decision(payload)
             if contextual is not None:
@@ -225,6 +237,7 @@ class ProactiveRuntime:
 
 _runtime = None
 _runtime_lock = threading.Lock()
+
 
 def get_proactive_runtime():
     global _runtime
