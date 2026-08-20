@@ -105,6 +105,10 @@ def test_voice_dialogue_timeout_returns_to_idle_and_disables_dialogue():
         def _emit_state(self, state):
             events.append(("state", state))
 
+        def _set_dialogue(self, enabled):
+            self._dialogue = bool(enabled)
+            self.dialogue_changed.emit(self._dialogue)
+
     class FakeDialogue:
         DIALOGUE_TIMEOUT = 1
 
