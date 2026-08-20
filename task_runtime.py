@@ -60,9 +60,13 @@ class TaskRuntime:
     def _make_task(self, goal, session_id=None):
         task_id = uuid.uuid4().hex[:12]
         now = datetime.now().isoformat(timespec="seconds")
-        return {"id": task_id, "goal": str(goal).strip(), "session_id": session_id or f"background:{task_id}",
-                "status": "queued", "created_at": now, "started_at": None, "finished_at": None,
-                "result": None, "error": None}
+        session_id = session_id or f"background:{task_id}"
+        correlation_id = None
+        if str(session_id).startswith("proactive:"):
+            correlation_id = str(session_id).split(":", 1)[1] or None
+        return {"id": task_id, "goal": str(goal).strip(), "session_id": session_id,
+                "correlation_id": correlation_id, "status": "queued", "created_at": now,
+                "started_at": None, "finished_at": None, "result": None, "error": None}
 
     def spawn(self, goal, session_id=None):
         goal = str(goal or "").strip()
@@ -105,22 +109,28 @@ class TaskRuntime:
                 task = self._tasks.get(task_id)
                 if task is None or task.get("status") == "cancelled": return
                 task["status"] = "completed"; task["result"] = str(result); task["finished_at"] = datetime.now().isoformat(timespec="seconds"); task["error"] = None; self._save()
-                self._emit("task.completed", {"task_id": task_id, "goal": goal, "result": str(result), "session_id": session_id})
+                self._emit("task.completed", {"task_id": task_id, "goal": goal, "result": str(result), "session_id": session_id}, task=task)
         except Exception as error:
             with self._lock:
                 task = self._tasks.get(task_id)
                 if task is None or task.get("status") == "cancelled": return
                 task["status"] = "failed"; task["error"] = str(error); task["result"] = None; task["finished_at"] = datetime.now().isoformat(timespec="seconds"); task["traceback"] = traceback.format_exc()[-4000:]; self._save()
-                self._emit("task.failed", {"task_id": task_id, "goal": task.get("goal"), "error": str(error), "session_id": task.get("session_id")})
+                self._emit("task.failed", {"task_id": task_id, "goal": task.get("goal"), "error": str(error), "session_id": task.get("session_id")}, task=task)
         finally:
             with self._lock:
                 self._futures.pop(task_id, None); self._save()
 
     @staticmethod
-    def _emit(event_type, payload):
+    def _emit(event_type, payload, task=None):
         try:
             from event_bus import emit_event
-            emit_event(event_type, payload)
+            metadata = {"source": "task_runtime"}
+            correlation_id = (task or {}).get("correlation_id")
+            if correlation_id:
+                metadata["parent_event_id"] = correlation_id
+                metadata["correlation_id"] = correlation_id
+                metadata["causation_depth"] = 1
+            emit_event(event_type, payload, **metadata)
         except Exception as event_error:
             print("[Akira task runtime] event error:", event_error)
 
