@@ -74,8 +74,6 @@ class PermissionManager:
         return self._get().get(tool_name, "confirm")
 
     def set_permission(self, tool_name, level):
-        if tool_name not in DEFAULT_PERMISSIONS:
-            return "Неизвестный инструмент."
         if not isinstance(level, str) or level not in _VALID_LEVELS:
             return "Недопустимый уровень разрешения."
         with self._lock:
