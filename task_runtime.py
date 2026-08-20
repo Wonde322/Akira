@@ -57,14 +57,16 @@ class TaskRuntime:
             task=self._make_task(goal,session_id,parent_event_id=parent_event_id,correlation_id=correlation_id,causation_depth=causation_depth);task_id=task["id"];self._tasks[task_id]=task;self._save();future=self._executor.submit(self._run,task_id);self._futures[task_id]=future;task["status"]="running";task["started_at"]=datetime.now().isoformat(timespec="seconds");self._save()
         return {"success":True,"task_id":task_id,"status":"running","goal":goal,"output":f"Background task {task_id} запущен."}
     def cancel(self,task_id,reason="Cancelled by user"):
-        task_id=str(task_id)
+        task_id=str(task_id); cancelled_task=None
         with self._lock:
             task=self._tasks.get(task_id)
             if task is None:return {"success":False,"error":"task_not_found","task_id":task_id}
             if task.get("status") in {"completed","failed","cancelled","interrupted"}:return {"success":False,"error":"task_not_active","task_id":task_id,"status":task.get("status")}
             future=self._futures.get(task_id)
-            if future is not None and future.cancel():task["status"]="cancelled";task["error"]=str(reason);task["finished_at"]=datetime.now().isoformat(timespec="seconds");self._futures.pop(task_id,None);self._save();return {"success":True,"task_id":task_id,"status":"cancelled"}
-            return {"success":False,"error":"task_already_running","task_id":task_id,"status":task.get("status")}
+            if future is None or not future.cancel():return {"success":False,"error":"task_already_running","task_id":task_id,"status":task.get("status")}
+            task["status"]="cancelled";task["error"]=str(reason);task["finished_at"]=datetime.now().isoformat(timespec="seconds");self._futures.pop(task_id,None);self._save();cancelled_task=dict(task)
+        self._emit("task.cancelled",{"task_id":task_id,"goal":cancelled_task.get("goal"),"error":cancelled_task.get("error"),"session_id":cancelled_task.get("session_id")},task=cancelled_task)
+        return {"success":True,"task_id":task_id,"status":"cancelled"}
     def _run(self,task_id):
         try:
             with self._lock:
