@@ -12,6 +12,7 @@ EVENT_LOG=RUNTIME_DIR/"events.jsonl"
 TRIGGER_FILE=RUNTIME_DIR/"triggers.json"
 MAX_TRIGGERS=200
 MAX_EVENT_LOG_BYTES=2_000_000
+MAX_TRIGGER_CORRELATIONS=32
 def _now(): return datetime.now().astimezone()
 def _iso(value=None): return (value or _now()).isoformat(timespec="seconds")
 class EventBus:
@@ -23,7 +24,10 @@ class EventBus:
   except Exception: return
   if isinstance(data,list):
    for trigger in data[-MAX_TRIGGERS:]:
-    if isinstance(trigger,dict) and trigger.get("id"): self._triggers[trigger["id"]]=trigger
+    if isinstance(trigger,dict) and trigger.get("id"):
+     correlations=trigger.get("recent_correlations")
+     trigger["recent_correlations"]=[str(value) for value in correlations[-MAX_TRIGGER_CORRELATIONS:]] if isinstance(correlations,list) else []
+     self._triggers[trigger["id"]]=trigger
  def _save_triggers(self):
   tmp=TRIGGER_FILE.with_suffix(".json.tmp"); tmp.write_text(json.dumps(list(self._triggers.values())[-MAX_TRIGGERS:],ensure_ascii=False,indent=2),encoding="utf-8"); tmp.replace(TRIGGER_FILE)
  def _append_event(self,event):
@@ -40,7 +44,7 @@ class EventBus:
   if not goal:return {"success":False,"error":"empty_goal","output":"Не указана trigger goal."}
   try: cooldown=max(0,int(cooldown_seconds or 0))
   except Exception:return {"success":False,"error":"invalid_cooldown","output":"cooldown_seconds должен быть числом."}
-  tid=uuid.uuid4().hex[:12]; trigger={"id":tid,"event_type":event_type,"goal":goal,"enabled":True,"cooldown_seconds":cooldown,"created_at":_iso(),"last_fired_at":None,"fire_count":0,"last_task_id":None,"last_error":None}
+  tid=uuid.uuid4().hex[:12]; trigger={"id":tid,"event_type":event_type,"goal":goal,"enabled":True,"cooldown_seconds":cooldown,"created_at":_iso(),"last_fired_at":None,"fire_count":0,"last_task_id":None,"last_error":None,"recent_correlations":[]}
   with self._lock:self._triggers[tid]=trigger; self._save_triggers()
   return {"success":True,"trigger_id":tid,"trigger":dict(trigger),"output":f"Trigger {tid} создан."}
  def cancel_trigger(self,trigger_id):
@@ -55,11 +59,18 @@ class EventBus:
   limit=max(1,min(limit,100))
   with self._lock:data=list(self._triggers.values())[-limit:];data.reverse()
   return {"success":True,"triggers":data,"output":json.dumps(data,ensure_ascii=False,indent=2)}
+ def _correlation_seen(self,trigger,correlation_id):
+  if not correlation_id:return False
+  return str(correlation_id) in set(str(value) for value in trigger.get("recent_correlations") or [])
+ def _remember_correlation(self,trigger,correlation_id):
+  if not correlation_id:return
+  correlations=[str(value) for value in trigger.get("recent_correlations") or [] if str(value)!=str(correlation_id)]
+  correlations.append(str(correlation_id));trigger["recent_correlations"]=correlations[-MAX_TRIGGER_CORRELATIONS:]
  def emit(self,event_type,payload=None,*,parent_event_id=None,correlation_id=None,causation_depth=0,source="system"):
   eid=uuid.uuid4().hex[:16]; event={"id":eid,"type":str(event_type),"timestamp":_iso(),"payload":payload if isinstance(payload,dict) else {},"parent_event_id":parent_event_id,"correlation_id":correlation_id or parent_event_id or eid,"causation_depth":max(0,int(causation_depth or 0)),"source":str(source or "system")}
   with self._lock:
    self._append_event(event); matched=[dict(t) for t in self._triggers.values() if t.get("enabled") and t.get("event_type")==event["type"]]
-  eligible=[t for t in matched if not self._cooldown_active(t)]
+  eligible=[t for t in matched if not self._cooldown_active(t) and not self._correlation_seen(t,event.get("correlation_id"))]
   goals=[self._render_goal(t.get("goal",""),event) for t in eligible]
   try:
    from proactive_runtime import get_proactive_runtime
@@ -72,7 +83,7 @@ class EventBus:
      current=self._triggers.get(trigger["id"])
      if current is None:continue
      if spawn.get("success"):
-      current["last_fired_at"]=_iso();current["fire_count"]=int(current.get("fire_count") or 0)+1;current["last_task_id"]=spawn.get("task_id");current["last_error"]=None
+      current["last_fired_at"]=_iso();current["fire_count"]=int(current.get("fire_count") or 0)+1;current["last_task_id"]=spawn.get("task_id");current["last_error"]=None;self._remember_correlation(current,event.get("correlation_id"))
      elif result.get("decision",{}).get("action")=="spawn_task":current["last_error"]=spawn.get("error") or spawn.get("output")
     self._save_triggers()
   launched=result.get("launched",[])
