@@ -10,6 +10,7 @@ from datetime import datetime
 from enum import Enum
 
 from context_triggers import ContextTriggerEngine
+from proactive_policy import get_proactive_reasoning_policy
 
 MAX_CAUSATION_DEPTH = 3
 
@@ -40,12 +41,13 @@ class ProactiveDecision:
 class ProactiveRuntime:
     def __init__(self, dedupe_seconds=5.0, desktop_cooldown_seconds=30.0,
                  max_causation_depth=MAX_CAUSATION_DEPTH, clock=None, inbox=None,
-                 context_rules=None, context_rule_store=None):
+                 context_rules=None, context_rule_store=None, reasoning_policy=None):
         self.dedupe_seconds = float(dedupe_seconds)
         self.desktop_cooldown_seconds = float(desktop_cooldown_seconds)
         self.max_causation_depth = int(max_causation_depth)
         self._clock = clock or time.monotonic
         self._inbox = inbox
+        self._reasoning_policy = reasoning_policy or get_proactive_reasoning_policy()
         if context_rule_store is None:
             from context_rule_store import get_context_rule_store
             context_rule_store = get_context_rule_store()
@@ -137,8 +139,16 @@ class ProactiveRuntime:
                                  source="context_trigger",
                                  priority=rule["priority"] if rule["priority"] in {"low", "normal", "high"} else "normal")
 
-    @staticmethod
-    def _pattern_decision(event_type, payload):
+    def _pattern_decision(self, event_type, payload):
+        recommendation = self._reasoning_policy.decide(event_type, payload)
+        if recommendation is not None:
+            try:
+                action = ProactiveAction(recommendation.action)
+            except ValueError:
+                action = ProactiveAction.RECORD
+            return ProactiveDecision(action, recommendation.reason, goal=recommendation.goal,
+                                     notification=recommendation.notification,
+                                     source="context_reasoning", priority=recommendation.priority)
         message = str(payload.get("message") or "").strip()
         if not message:
             return None
