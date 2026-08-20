@@ -86,7 +86,7 @@ class ProactiveMainWindow(MainWindow):
             or item.get("title")
             or ""
         ).strip()
-        if not text or self._is_internal_proactive_payload(text):
+        if not text or ProactiveMainWindow._is_internal_proactive_payload(text):
             return ""
         return text
 
