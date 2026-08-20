@@ -58,6 +58,19 @@ def test_proactive_text_rejects_internal_observation_json():
     ) == ""
 
 
+def test_proactive_text_rejects_legacy_test_artifacts():
+    window = _window()
+    assert ProactiveMainWindow._proactive_text(
+        window, {"message": "Готово: Проверить контекст"}
+    ) == ""
+    assert ProactiveMainWindow._proactive_text(
+        window, {"message": "Не удалось завершить задачу «Проверить контекст»: boom"}
+    ) == ""
+    assert ProactiveMainWindow._proactive_text(
+        window, {"message": "Готово: x"}
+    ) == ""
+
+
 def test_proactive_text_keeps_ordinary_json_like_text_out_of_filter():
     window = _window()
     assert ProactiveMainWindow._proactive_text(
