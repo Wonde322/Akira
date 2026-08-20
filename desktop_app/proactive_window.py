@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 
 from .proactive_surface import ProactiveDesktopBridge
@@ -9,9 +10,13 @@ from .window import MainWindow
 
 
 class ProactiveMainWindow(MainWindow):
-    """MainWindow that routes proactive notifications and answers live."""
-
     _WAKE_WORDS = {"акира", "akira"}
+    _INTERNAL_OUTPUT_KEYS = {"status", "evidence", "success", "error", "output", "data"}
+    _LEGACY_TEST_MESSAGES = {
+        "готово: проверить контекст",
+        "готово: x",
+        "ok",
+    }
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -22,7 +27,6 @@ class ProactiveMainWindow(MainWindow):
 
     @classmethod
     def _is_wake_only(cls, text):
-        """Accept only the standalone wake word, with surrounding punctuation."""
         if not isinstance(text, str):
             return False
         match = re.fullmatch(
@@ -33,14 +37,10 @@ class ProactiveMainWindow(MainWindow):
 
     def _set_state(self, state):
         super()._set_state(state)
-        # TTS must never make the chat read-only.
         if state == self.SPEAKING:
             self.input.setEnabled(True)
 
     def _acknowledge_text_wake(self):
-        """A typed wake word must never leave the microphone in dialogue mode."""
-        # A queued/stale voice dialogue can otherwise keep recording after a
-        # typed wake word and turn later ambient audio into a chat request.
         self.voice.set_dialogue(False)
         self.voice.resume()
         self._set_state(self.IDLE)
@@ -63,13 +63,32 @@ class ProactiveMainWindow(MainWindow):
         self.input.setEnabled(True)
         self.input.setFocus()
 
+    @classmethod
+    def _is_internal_proactive_payload(cls, text):
+        """Structured tool/observation output is never user-facing chat text."""
+        normalized = text.casefold().strip()
+        if normalized in cls._LEGACY_TEST_MESSAGES:
+            return True
+        if normalized.startswith("не удалось завершить задачу") and normalized.endswith(": boom"):
+            return True
+        try:
+            value = json.loads(text)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return False
+        if not isinstance(value, dict):
+            return False
+        return bool(set(value) & cls._INTERNAL_OUTPUT_KEYS)
+
     def _proactive_text(self, item):
-        return str(
+        text = str(
             item.get("message")
             or item.get("text")
             or item.get("title")
             or ""
         ).strip()
+        if not text or ProactiveMainWindow._is_internal_proactive_payload(text):
+            return ""
+        return text
 
     def _on_proactive_notification(self, item):
         text = self._proactive_text(item)
@@ -124,6 +143,18 @@ class ProactiveMainWindow(MainWindow):
             self._last_voice = True
             return
         super()._on_voice_text(text)
+
+    def _on_answer(self, answer):
+        """A completed voice command is one turn: answer, then wake-listening."""
+        was_voice = self._last_voice
+        if was_voice and self.voice.is_dialogue():
+            self.voice.end_turn()
+        super()._on_answer(answer)
+
+    def _on_error(self, message):
+        if self._last_voice and self.voice.is_dialogue():
+            self.voice.end_turn()
+        super()._on_error(message)
 
     def closeEvent(self, event):
         self.proactive_surface.stop()

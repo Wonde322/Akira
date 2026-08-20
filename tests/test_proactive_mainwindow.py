@@ -48,6 +48,36 @@ def test_proactive_text_prefers_message():
     ) == "hello"
 
 
+def test_proactive_text_rejects_internal_observation_json():
+    window = _window()
+    assert ProactiveMainWindow._proactive_text(
+        window,
+        {
+            "message": '{"status":"verified","evidence":"frontmost_app is Discord"}'
+        },
+    ) == ""
+
+
+def test_proactive_text_rejects_legacy_test_artifacts():
+    window = _window()
+    assert ProactiveMainWindow._proactive_text(
+        window, {"message": "Готово: Проверить контекст"}
+    ) == ""
+    assert ProactiveMainWindow._proactive_text(
+        window, {"message": "Не удалось завершить задачу «Проверить контекст»: boom"}
+    ) == ""
+    assert ProactiveMainWindow._proactive_text(
+        window, {"message": "Готово: x"}
+    ) == ""
+
+
+def test_proactive_text_keeps_ordinary_json_like_text_out_of_filter():
+    window = _window()
+    assert ProactiveMainWindow._proactive_text(
+        window, {"message": '{"topic":"Discord"}'}
+    ) == '{"topic":"Discord"}'
+
+
 def test_submit_proactive_answer_does_not_use_brain_worker():
     window = _window()
     messages = []
