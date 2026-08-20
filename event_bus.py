@@ -27,6 +27,26 @@ def _iso(value=None):
     return (value or _now()).isoformat(timespec="seconds")
 
 
+def _persisted_int(value, default=0):
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return default
+
+
+def _persisted_bool(value, default=True):
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"false", "0", "no", "off", ""}:
+            return False
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        return default
+    if value is None:
+        return default
+    return bool(value)
+
+
 class EventBus:
     def __init__(self):
         self._lock = threading.RLock()
@@ -43,10 +63,25 @@ class EventBus:
             return
         if isinstance(data, list):
             for trigger in data[-MAX_TRIGGERS:]:
-                if isinstance(trigger, dict) and trigger.get("id"):
-                    correlations = trigger.get("recent_correlations")
-                    trigger["recent_correlations"] = [str(value) for value in correlations[-MAX_TRIGGER_CORRELATIONS:]] if isinstance(correlations, list) else []
-                    self._triggers[trigger["id"]] = trigger
+                if not isinstance(trigger, dict):
+                    continue
+                raw_id = trigger.get("id")
+                if isinstance(raw_id, bool) or not isinstance(raw_id, (str, int)):
+                    continue
+                trigger_id = str(raw_id).strip()
+                event_type = str(trigger.get("event_type") or "").strip()
+                goal = str(trigger.get("goal") or "").strip()
+                if not trigger_id or not event_type or not goal:
+                    continue
+                trigger["id"] = trigger_id
+                trigger["event_type"] = event_type
+                trigger["goal"] = goal
+                trigger["enabled"] = _persisted_bool(trigger.get("enabled"), True)
+                trigger["cooldown_seconds"] = max(0, _persisted_int(trigger.get("cooldown_seconds"), 0))
+                trigger["fire_count"] = max(0, _persisted_int(trigger.get("fire_count"), 0))
+                correlations = trigger.get("recent_correlations")
+                trigger["recent_correlations"] = [str(value) for value in correlations[-MAX_TRIGGER_CORRELATIONS:]] if isinstance(correlations, list) else []
+                self._triggers[trigger_id] = trigger
 
     def _save_triggers(self):
         tmp = TRIGGER_FILE.with_suffix(".json.tmp")
@@ -141,11 +176,7 @@ class EventBus:
                 spawn = result.get("spawn") or {}
                 if spawn.get("success"):
                     current["last_fired_at"] = _iso()
-                    try:
-                        fire_count = int(current.get("fire_count") or 0)
-                    except (TypeError, ValueError):
-                        fire_count = 0
-                    current["fire_count"] = max(0, fire_count) + 1
+                    current["fire_count"] = max(0, _persisted_int(current.get("fire_count"), 0)) + 1
                     current["last_task_id"] = spawn.get("task_id")
                     current["last_error"] = None
                 elif result.get("decision", {}).get("action") == "spawn_task":
@@ -157,7 +188,7 @@ class EventBus:
 
     def emit(self, event_type, payload=None, *, parent_event_id=None, correlation_id=None, causation_depth=0, source="system"):
         eid = uuid.uuid4().hex[:16]
-        event = {"id": eid, "type": str(event_type), "timestamp": _iso(), "payload": payload if isinstance(payload, dict) else {}, "parent_event_id": parent_event_id, "correlation_id": correlation_id or parent_event_id or eid, "causation_depth": max(0, int(causation_depth or 0)), "source": str(source or "system")}
+        event = {"id": eid, "type": str(event_type), "timestamp": _iso(), "payload": payload if isinstance(payload, dict) else {}, "parent_event_id": parent_event_id, "correlation_id": correlation_id or parent_event_id or eid, "causation_depth": max(0, _persisted_int(causation_depth, 0)), "source": str(source or "system")}
         with self._lock:
             self._append_event(event)
             matched = [dict(t) for t in self._triggers.values() if t.get("enabled") and t.get("event_type") == event["type"]]
@@ -189,13 +220,18 @@ class EventBus:
                 dispatched["trigger_id"] = trigger["id"]
                 try:
                     result = runtime.handle(dispatched, [self._render_goal(trigger.get("goal", ""), event)])
+                    if not isinstance(result, dict):
+                        raise TypeError("proactive_runtime returned non-dict result")
                 except Exception as error:
                     result = error
                 results.append((trigger, result))
             self._record_results(results, event.get("correlation_id"))
         else:
             try:
-                results = [(None, runtime.handle(event, []))]
+                result = runtime.handle(event, [])
+                if not isinstance(result, dict):
+                    raise TypeError("proactive_runtime returned non-dict result")
+                results = [(None, result)]
             except Exception as error:
                 return {"success": False, "event": event, "error": "proactive_runtime_error", "output": str(error)}
         launched = [item for _, result in results if not isinstance(result, Exception) for item in result.get("launched", [])]
@@ -204,10 +240,7 @@ class EventBus:
         return {"success": not errors, "event": event, "launched": launched, "decision": decisions[0] if len(decisions) == 1 else decisions, "error": "proactive_runtime_error" if errors else None, "output": str(errors[0]) if errors and not launched else json.dumps(launched, ensure_ascii=False)}
 
     def _cooldown_active(self, trigger):
-        try:
-            cooldown = int(trigger.get("cooldown_seconds") or 0)
-        except (TypeError, ValueError):
-            return False
+        cooldown = _persisted_int(trigger.get("cooldown_seconds"), 0)
         last = trigger.get("last_fired_at")
         if cooldown <= 0 or not last:
             return False
@@ -218,7 +251,8 @@ class EventBus:
         now = _now()
         if timestamp.tzinfo is None:
             timestamp = timestamp.replace(tzinfo=now.tzinfo)
-        return (now - timestamp).total_seconds() < cooldown
+        elapsed = (now - timestamp).total_seconds()
+        return 0 <= elapsed < cooldown
 
     def _render_goal(self, goal, event):
         payload = event.get("payload", {})
