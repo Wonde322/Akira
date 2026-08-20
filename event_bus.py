@@ -80,7 +80,8 @@ class EventBus:
     spawn=result.get("spawn") or {}
     if spawn.get("success"):
      current["last_fired_at"]=_iso();current["fire_count"]=int(current.get("fire_count") or 0)+1;current["last_task_id"]=spawn.get("task_id");current["last_error"]=None
-    elif result.get("decision",{}).get("action")=="spawn_task":current["last_error"]=spawn.get("error") or spawn.get("output")
+    elif result.get("decision",{}).get("action")=="spawn_task":
+     current["last_error"]=spawn.get("error") or spawn.get("output");self._forget_correlation(current,correlation_id)
     else:self._forget_correlation(current,correlation_id)
    self._save_triggers()
  def emit(self,event_type,payload=None,*,parent_event_id=None,correlation_id=None,causation_depth=0,source="system"):
