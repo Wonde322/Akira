@@ -64,6 +64,12 @@ class EventBus:
  def _forget_correlation(self,trigger,correlation_id):
   if not correlation_id:return
   trigger["recent_correlations"]=[str(value) for value in trigger.get("recent_correlations") or [] if str(value)!=str(correlation_id)]
+ def _trigger_still_enabled(self,trigger_id,correlation_id):
+  with self._lock:
+   current=self._triggers.get(trigger_id)
+   if current is not None and current.get("enabled"):return True
+   if current is not None:self._forget_correlation(current,correlation_id);self._save_triggers()
+  return False
  def emit(self,event_type,payload=None,*,parent_event_id=None,correlation_id=None,causation_depth=0,source="system"):
   eid=uuid.uuid4().hex[:16];event={"id":eid,"type":str(event_type),"timestamp":_iso(),"payload":payload if isinstance(payload,dict) else {},"parent_event_id":parent_event_id,"correlation_id":correlation_id or parent_event_id or eid,"causation_depth":max(0,int(causation_depth or 0)),"source":str(source or "system")}
   with self._lock:
@@ -78,6 +84,7 @@ class EventBus:
    runtime=get_proactive_runtime();results=[]
    if eligible:
     for trigger in eligible:
+     if not self._trigger_still_enabled(trigger["id"],event.get("correlation_id")):continue
      dispatched=dict(event);dispatched["trigger_id"]=trigger["id"]
      results.append((trigger,runtime.handle(dispatched,[self._render_goal(trigger.get("goal",""),event)])))
    else:results=[(None,runtime.handle(event,[]))]
