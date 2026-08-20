@@ -16,6 +16,26 @@ class ProactiveDelivery:
             feedback_store = get_proactive_feedback_store()
         self._feedback_store = feedback_store
         self._lock = threading.RLock(); self._pending_questions = {}
+
+    def discard_startup_notifications(self, limit=100):
+        """Acknowledge stale notify items left from an earlier app process.
+
+        Persistent notifications are useful for non-UI consumers, but replaying
+        them as fresh chat messages every time the desktop app starts leaks old
+        internal context into the conversation. Pending questions are preserved.
+        """
+        discarded = []
+        for item in self._inbox.list(limit=limit, unread_only=True):
+            if item.get("action") == "ask_user":
+                continue
+            item_id = item.get("id")
+            if not item_id:
+                continue
+            result = self._inbox.acknowledge(item_id)
+            if result.get("success"):
+                discarded.append(item_id)
+        return discarded
+
     def poll(self, limit=20, on_notify=None, on_question=None):
         delivered=[]; items=list(reversed(self._inbox.list(limit=limit, unread_only=True)))
         for item in items:
