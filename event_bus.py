@@ -61,10 +61,18 @@ class EventBus:
  def _remember_correlation(self,trigger,correlation_id):
   if not correlation_id:return
   correlations=[str(value) for value in trigger.get("recent_correlations") or [] if str(value)!=str(correlation_id)];correlations.append(str(correlation_id));trigger["recent_correlations"]=correlations[-MAX_TRIGGER_CORRELATIONS:]
+ def _forget_correlation(self,trigger,correlation_id):
+  if not correlation_id:return
+  trigger["recent_correlations"]=[str(value) for value in trigger.get("recent_correlations") or [] if str(value)!=str(correlation_id)]
  def emit(self,event_type,payload=None,*,parent_event_id=None,correlation_id=None,causation_depth=0,source="system"):
   eid=uuid.uuid4().hex[:16];event={"id":eid,"type":str(event_type),"timestamp":_iso(),"payload":payload if isinstance(payload,dict) else {},"parent_event_id":parent_event_id,"correlation_id":correlation_id or parent_event_id or eid,"causation_depth":max(0,int(causation_depth or 0)),"source":str(source or "system")}
-  with self._lock:self._append_event(event);matched=[dict(t) for t in self._triggers.values() if t.get("enabled") and t.get("event_type")==event["type"]]
-  eligible=[t for t in matched if not self._cooldown_active(t) and not self._correlation_seen(t,event.get("correlation_id"))]
+  with self._lock:
+   self._append_event(event);matched=[dict(t) for t in self._triggers.values() if t.get("enabled") and t.get("event_type")==event["type"]]
+   eligible=[t for t in matched if not self._cooldown_active(t) and not self._correlation_seen(t,event.get("correlation_id"))]
+   for trigger in eligible:
+    current=self._triggers.get(trigger["id"])
+    if current is not None:self._remember_correlation(current,event.get("correlation_id"))
+   if eligible:self._save_triggers()
   try:
    from proactive_runtime import get_proactive_runtime
    runtime=get_proactive_runtime();results=[]
@@ -73,7 +81,13 @@ class EventBus:
      dispatched=dict(event);dispatched["trigger_id"]=trigger["id"]
      results.append((trigger,runtime.handle(dispatched,[self._render_goal(trigger.get("goal",""),event)])))
    else:results=[(None,runtime.handle(event,[]))]
-  except Exception as error:return {"success":False,"event":event,"error":"proactive_runtime_error","output":str(error)}
+  except Exception as error:
+   with self._lock:
+    for trigger in eligible:
+     current=self._triggers.get(trigger["id"])
+     if current is not None:self._forget_correlation(current,event.get("correlation_id"))
+    if eligible:self._save_triggers()
+   return {"success":False,"event":event,"error":"proactive_runtime_error","output":str(error)}
   if eligible:
    with self._lock:
     for trigger,result in results:
@@ -81,8 +95,9 @@ class EventBus:
      if current is None:continue
      spawn=result.get("spawn") or {}
      if spawn.get("success"):
-      current["last_fired_at"]=_iso();current["fire_count"]=int(current.get("fire_count") or 0)+1;current["last_task_id"]=spawn.get("task_id");current["last_error"]=None;self._remember_correlation(current,event.get("correlation_id"))
+      current["last_fired_at"]=_iso();current["fire_count"]=int(current.get("fire_count") or 0)+1;current["last_task_id"]=spawn.get("task_id");current["last_error"]=None
      elif result.get("decision",{}).get("action")=="spawn_task":current["last_error"]=spawn.get("error") or spawn.get("output")
+     else:self._forget_correlation(current,event.get("correlation_id"))
     self._save_triggers()
   launched=[item for _,result in results for item in result.get("launched",[])]
   decisions=[result.get("decision") for _,result in results]
