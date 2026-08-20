@@ -57,11 +57,12 @@ class TaskRuntime:
             task=self._make_task(goal,session_id,parent_event_id=parent_event_id,correlation_id=correlation_id,causation_depth=causation_depth);task_id=task["id"];self._tasks[task_id]=task
             task["status"]="running";task["started_at"]=datetime.now().isoformat(timespec="seconds");self._save()
             try:
-                future=self._executor.submit(self._run,task_id);self._futures[task_id]=future
+                future=self._executor.submit(self._run,task_id)
+                if task.get("status") in {"queued","running"}:self._futures[task_id]=future
             except Exception as error:
                 task["status"]="failed";task["error"]=str(error);task["result"]=None;task["finished_at"]=datetime.now().isoformat(timespec="seconds");self._save()
                 return {"success":False,"error":"task_submit_failed","task_id":task_id,"status":"failed","output":f"Не удалось запустить background task: {error}"}
-        return {"success":True,"task_id":task_id,"status":"running","goal":goal,"output":f"Background task {task_id} запущен."}
+        return {"success":True,"task_id":task_id,"status":task.get("status"),"goal":goal,"output":f"Background task {task_id} запущен."}
     def cancel(self,task_id,reason="Cancelled by user"):
         task_id=str(task_id); cancelled_task=None
         with self._lock:
