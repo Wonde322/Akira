@@ -38,7 +38,12 @@ class ProactiveMainWindow(MainWindow):
             self.input.setEnabled(True)
 
     def _acknowledge_text_wake(self):
-        """A typed 'Акира' is UI intent, not permission to open the microphone."""
+        """A typed wake word must never leave the microphone in dialogue mode."""
+        # A queued/stale voice dialogue can otherwise keep recording after a
+        # typed wake word and turn later ambient audio into a chat request.
+        self.voice.set_dialogue(False)
+        self.voice.resume()
+        self._set_state(self.IDLE)
         self.status.setText("Слушаю.")
         self.status.setStyleSheet(
             "color: #c0c0c8; font-size: 12px; background: transparent;"

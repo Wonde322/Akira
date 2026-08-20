@@ -67,24 +67,14 @@ class VoiceEngine(QObject):
             self._thread.join(timeout=3)
 
     def _submit(self, kind, payload=None):
-        """Ставит команду и прерывает текущее прослушивание.
-
-        Внутренний цикл движка может быть заблокирован в record_utterance
-        (прослушивание wake word / диалога). Без прерывания команда лежала бы
-        в очереди, пока слушающий цикл не вернётся сам — клики по кнопке и
-        сфере выглядели бы мёртвыми. interrupt заставляет record_utterance
-        вернуться немедленно, после чего цикл читает команду из очереди.
-        """
+        """Ставит команду и прерывает текущее прослушивание."""
         self._interrupt.set()
         self._commands.put((kind, payload))
 
-    # ------------------------------------------------------------------ API
     def capture_once(self):
-        """Разовое распознавание (кнопка микрофона)."""
         self._submit("capture")
 
     def cancel_capture(self):
-        """Прерывает текущую запись разового распознавания."""
         self._cancel_event.set()
         self._submit("cancel")
 
@@ -98,21 +88,17 @@ class VoiceEngine(QObject):
         self._submit("speak", text)
 
     def stop_speaking(self):
-        """Прерывает текущую озвучку TTS."""
         dlg.stop_speaking()
 
     def pause(self):
-        """Говорит движку перестать слушать (ждём ответа)."""
         self._submit("pause")
 
     def resume(self):
-        """Возобновляет прослушивание после ответа."""
         self._submit("resume")
 
     def is_dialogue(self):
         return self._dialogue
 
-    # ------------------------------------------------------------- internals
     def _emit_state(self, state):
         self.state_changed.emit(state)
 
@@ -120,7 +106,6 @@ class VoiceEngine(QObject):
         import sounddevice as sd
 
         self._emit_state(self.IDLE)
-
         stream = None
         try:
             stream = sd.InputStream(
@@ -137,9 +122,7 @@ class VoiceEngine(QObject):
             self._audio_ok = False
             print("Микрофон недоступен:", error)
             if not self._stop_event.is_set():
-                self.error.emit(
-                    "Не удалось открыть микрофон. Проверь доступ в Настройках."
-                )
+                self.error.emit("Не удалось открыть микрофон. Проверь доступ в Настройках.")
 
         try:
             self._loop(dlg)
@@ -150,18 +133,14 @@ class VoiceEngine(QObject):
     def _loop(self, dlg):
         while not self._stop_event.is_set():
             cmd = None
-
             try:
                 cmd = self._commands.get(timeout=0.05)
             except queue.Empty:
                 pass
 
             if cmd is not None:
-                # Команда получена: прерывание больше не нужно, следующее
-                # прослушивание стартует с чистого состояния.
                 self._interrupt.clear()
                 kind, payload = cmd
-
                 if kind == "stop":
                     break
                 if kind == "speak":
@@ -194,7 +173,6 @@ class VoiceEngine(QObject):
             if not self._listening:
                 time.sleep(0.05)
                 continue
-
             if self._dialogue:
                 self._dialogue_listen(dlg)
             elif self._wake_enabled:
@@ -207,7 +185,6 @@ class VoiceEngine(QObject):
         try:
             dlg.speak(text)
         finally:
-            # После речи возвращаем прослушивание и состояние.
             self._listening = True
             self._emit_state(self.IDLE)
 
@@ -216,9 +193,6 @@ class VoiceEngine(QObject):
         self._emit_state(self.LISTENING)
         self.mic_capture.emit(True)
         try:
-            # Без открытого потока record_utterance просто дождётся таймаута
-            # или отмены (повторный клик) — кнопка остаётся ON, пока не
-            # вернёмся. Это позволяет проверить OFF→ON→OFF без разрешения.
             audio = dlg.record_utterance(
                 timeout=dlg.DIALOGUE_TIMEOUT,
                 cancel_event=self._cancel_event,
@@ -227,19 +201,15 @@ class VoiceEngine(QObject):
             print("Capture error:", error)
             audio = None
         finally:
-            # Кнопка обязана вернуться в OFF при любом завершении записи.
             self.mic_capture.emit(False)
 
         if audio is None:
             self._emit_state(self.IDLE)
             return
-
         text = self._safe_transcribe(dlg, audio)
-
         if not text:
             self._emit_state(self.IDLE)
             return
-
         self._listening = False
         self._emit_state(self.THINKING)
         self.text_ready.emit(text)
@@ -253,18 +223,20 @@ class VoiceEngine(QObject):
             timeout=dlg.DIALOGUE_TIMEOUT,
             cancel_event=self._interrupt,
         )
-
         if audio is None:
-            # Тишина в диалоге — остаёмся слушать, пока dialogue включён.
-            self._emit_state(self.LISTENING)
+            # A wake/dialogue turn expires on silence. This returns control to
+            # the background wake listener instead of keeping the microphone
+            # in an indefinite dialogue state that can consume ambient audio.
+            self._dialogue = False
+            self.dialogue_changed.emit(False)
+            self._emit_state(self.IDLE)
             return
-
         text = self._safe_transcribe(dlg, audio)
-
         if not text:
-            self._emit_state(self.LISTENING)
+            self._dialogue = False
+            self.dialogue_changed.emit(False)
+            self._emit_state(self.IDLE)
             return
-
         self._listening = False
         self._emit_state(self.THINKING)
         self.text_ready.emit(text)
@@ -274,24 +246,17 @@ class VoiceEngine(QObject):
             time.sleep(0.2)
             return
         audio = dlg.record_utterance(cancel_event=self._interrupt)
-
         if audio is None:
             return
-
         text = self._safe_transcribe(dlg, audio)
-
         if not text:
             return
-
         detected = dlg.find_wake_word(text)
-
         if detected is None:
             return
-
         self._dialogue = True
         self.dialogue_changed.emit(True)
         command = dlg.remove_wake_word(text, detected)
-
         if command:
             self._listening = False
             self._emit_state(self.THINKING)
@@ -306,8 +271,6 @@ class VoiceEngine(QObject):
             self.error.emit("Не удалось распознать речь.")
             print("Whisper error:", error)
             return ""
-
         if _is_hallucination(text):
             return ""
-
         return text
