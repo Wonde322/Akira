@@ -7,10 +7,14 @@ from proactive_action_execution import get_proactive_action_executor
 from proactive_action_handlers import get_proactive_action_handlers
 
 class ProactiveDelivery:
-    def __init__(self, inbox=None, emit=None, action_executor=None, action_handlers=None):
+    def __init__(self, inbox=None, emit=None, action_executor=None, action_handlers=None, feedback_store=None):
         self._inbox = inbox or get_proactive_inbox(); self._emit = emit or emit_event
         self._executor = action_executor or get_proactive_action_executor(self._emit)
         self._handlers = action_handlers
+        if feedback_store is None:
+            from proactive_feedback import get_proactive_feedback_store
+            feedback_store = get_proactive_feedback_store()
+        self._feedback_store = feedback_store
         self._lock = threading.RLock(); self._pending_questions = {}
     def poll(self, limit=20, on_notify=None, on_question=None):
         delivered=[]; items=list(reversed(self._inbox.list(limit=limit, unread_only=True)))
@@ -40,8 +44,12 @@ class ProactiveDelivery:
         key=str(item_id)
         with self._lock:item=self._pending_questions.get(key)
         if item is None:return {"success":False,"error":"question_not_pending"}
+        proposals=item.get("proposals") or []
+        proposal=next((candidate for candidate in proposals if str(candidate.get("id"))==str(proposal_id)),None)
         result=self._executor.execute(item,proposal_id)
         if not result.get("success"):return result
+        if proposal is not None:
+            result["feedback"]=self._feedback_store.record(item.get("reason"),proposal.get("kind"))
         if self._handlers is not None:
             handled=self._handlers.handle(result.get("event"))
             result["execution"]=handled
