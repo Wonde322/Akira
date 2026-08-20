@@ -2,18 +2,16 @@
 
 from __future__ import annotations
 
+import re
+
 from .proactive_surface import ProactiveDesktopBridge
 from .window import MainWindow
 
 
 class ProactiveMainWindow(MainWindow):
-    """MainWindow that routes proactive notifications and answers live.
+    """MainWindow that routes proactive notifications and answers live."""
 
-    Normal user messages still go to ``BrainWorker``.  While Akira has an
-    active proactive question, the next submitted message is instead routed
-    through ``ProactiveDelivery.answer`` so it continues the original event
-    chain rather than becoming an unrelated chat request.
-    """
+    _WAKE_WORDS = {"акира", "akira"}
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -21,6 +19,44 @@ class ProactiveMainWindow(MainWindow):
         self.proactive_surface.notification.connect(self._on_proactive_notification)
         self.proactive_surface.question.connect(self._on_proactive_question)
         self.proactive_surface.start()
+
+    @classmethod
+    def _is_wake_only(cls, text):
+        """Accept only the standalone wake word, with surrounding punctuation."""
+        if not isinstance(text, str):
+            return False
+        match = re.fullmatch(
+            r"\s*(?:[^\w\s]*\s*)*([A-Za-zА-Яа-яЁё]+)(?:\s*[^\w\s]*)*\s*",
+            text,
+        )
+        return bool(match and match.group(1).lower() in cls._WAKE_WORDS)
+
+    def _set_state(self, state):
+        super()._set_state(state)
+        # TTS must never make the chat read-only.
+        if state == self.SPEAKING:
+            self.input.setEnabled(True)
+
+    def _acknowledge_text_wake(self):
+        """A typed 'Акира' is UI intent, not permission to open the microphone."""
+        self.status.setText("Слушаю.")
+        self.status.setStyleSheet(
+            "color: #c0c0c8; font-size: 12px; background: transparent;"
+        )
+        self.input.setEnabled(True)
+        self.input.setFocus()
+
+    def _enter_voice_wake_dialogue(self):
+        if not self.voice.is_dialogue():
+            self.voice.set_dialogue(True)
+        self.voice.resume()
+        self._set_state(self.LISTENING)
+        self.status.setText("Слушаю.")
+        self.status.setStyleSheet(
+            "color: #c0c0c8; font-size: 12px; background: transparent;"
+        )
+        self.input.setEnabled(True)
+        self.input.setFocus()
 
     def _proactive_text(self, item):
         return str(
@@ -32,9 +68,8 @@ class ProactiveMainWindow(MainWindow):
 
     def _on_proactive_notification(self, item):
         text = self._proactive_text(item)
-        if not text:
-            return
-        self._append_message(text, "akira")
+        if text:
+            self._append_message(text, "akira")
 
     def _on_proactive_question(self, item):
         text = self._proactive_text(item)
@@ -65,12 +100,20 @@ class ProactiveMainWindow(MainWindow):
         return True
 
     def _on_submit(self, message):
+        if self._is_wake_only(message):
+            self._acknowledge_text_wake()
+            return
+        if self._state == self.SPEAKING:
+            self.voice.stop_speaking()
         if self._submit_proactive_answer(message):
             return
         super()._on_submit(message)
 
     def _on_voice_text(self, text):
         if not text:
+            return
+        if self._is_wake_only(text):
+            self._enter_voice_wake_dialogue()
             return
         if self._submit_proactive_answer(text):
             self._last_voice = True
