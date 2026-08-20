@@ -72,5 +72,8 @@
   "create_context_rule": "auto",
   "list_context_rules": "auto",
   "remove_context_rule": "auto",
-  "set_context_rule_enabled": "auto"
+  "set_context_rule_enabled": "auto",
+  "set_proactive_mode": "auto",
+  "get_proactive_mode": "auto",
+  "reset_proactive_mode": "auto"
 }
