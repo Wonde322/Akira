@@ -50,6 +50,11 @@ class SituationContextBuilder:
         if schedules:
             score = max(score, 0.4)
         pressure = "critical" if score >= 0.95 else "high" if score >= 0.7 else "normal" if score >= 0.35 else "low"
+        timestamp = self.clock()
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+        else:
+            timestamp = timestamp.astimezone(timezone.utc)
         return {
             "desktop": desktop,
             "active_task": task,
@@ -58,7 +63,7 @@ class SituationContextBuilder:
             "schedule": {"active_count": len(schedules)},
             "pressure": pressure,
             "pressure_score": round(max(0.0, min(1.0, score)), 3),
-            "timestamp": self.clock().astimezone().isoformat(timespec="seconds"),
+            "timestamp": timestamp.isoformat(timespec="seconds"),
         }
 
 
