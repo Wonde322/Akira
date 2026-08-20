@@ -63,6 +63,7 @@ def test_unknown_tool_permission_cannot_be_persisted(tmp_path, isolated_project)
     permissions = isolated_project("permissions")
     path = tmp_path / "permissions.json"
     manager = permissions.PermissionManager(path)
+    manager._get()
     assert manager.set_permission("does_not_exist", "auto") == "Неизвестный инструмент."
     assert "does_not_exist" not in json.loads(path.read_text(encoding="utf-8"))
 
