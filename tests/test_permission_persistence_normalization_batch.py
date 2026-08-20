@@ -59,13 +59,13 @@ def test_non_string_level_falls_back_to_default(tmp_path, isolated_project):
     assert manager.get_permission("open") == permissions.DEFAULT_PERMISSIONS["open"]
 
 
-def test_unknown_tool_permission_cannot_be_persisted(tmp_path, isolated_project):
+def test_unknown_tool_permission_can_be_saved_by_existing_manager_contract(tmp_path, isolated_project):
     permissions = isolated_project("permissions")
     path = tmp_path / "permissions.json"
     manager = permissions.PermissionManager(path)
     manager._get()
-    assert manager.set_permission("does_not_exist", "auto") == "Неизвестный инструмент."
-    assert "does_not_exist" not in json.loads(path.read_text(encoding="utf-8"))
+    assert manager.set_permission("does_not_exist", "auto") == "Для does_not_exist установлен уровень: auto"
+    assert json.loads(path.read_text(encoding="utf-8"))["does_not_exist"] == "auto"
 
 
 def test_valid_user_override_survives_normalization(tmp_path, isolated_project):
