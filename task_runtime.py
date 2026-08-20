@@ -34,11 +34,15 @@ class TaskRuntime:
         try: payload = json.loads(TASK_FILE.read_text(encoding="utf-8"))
         except Exception: return
         if not isinstance(payload, list): return
+        interrupted = []
         for task in payload[-MAX_STORED_TASKS:]:
             if not isinstance(task, dict) or not task.get("id"): continue
-            if task.get("status") == "running": task["status"] = "interrupted"; task["error"] = "Akira process was restarted before this background task completed."; task["finished_at"] = datetime.now().isoformat(timespec="seconds")
+            if task.get("status") == "running":
+                task["status"] = "interrupted"; task["error"] = "Akira process was restarted before this background task completed."; task["finished_at"] = datetime.now().isoformat(timespec="seconds"); interrupted.append(dict(task))
             self._tasks[task["id"]] = task
         self._save()
+        for task in interrupted:
+            self._emit("task.interrupted", {"task_id":task.get("id"),"goal":task.get("goal"),"error":task.get("error"),"session_id":task.get("session_id")}, task=task)
     def _save(self):
         TASK_DIR.mkdir(parents=True, exist_ok=True); data=list(self._tasks.values())[-MAX_STORED_TASKS:]; temporary=TASK_FILE.with_suffix(".json.tmp"); temporary.write_text(json.dumps(data,ensure_ascii=False,indent=2),encoding="utf-8"); temporary.replace(TASK_FILE)
     def _active_count(self): return sum(1 for task in self._tasks.values() if task.get("status") in {"queued","running"})
