@@ -13,7 +13,10 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from enum import Enum
 
+from context_triggers import ContextTriggerEngine
+
 MAX_CAUSATION_DEPTH = 3
+
 
 class ProactiveAction(str, Enum):
     IGNORE = "ignore"
@@ -21,6 +24,7 @@ class ProactiveAction(str, Enum):
     NOTIFY = "notify"
     SPAWN_TASK = "spawn_task"
     ASK_USER = "ask_user"
+
 
 @dataclass
 class ProactiveDecision:
@@ -36,18 +40,30 @@ class ProactiveDecision:
         data["action"] = self.action.value
         return data
 
+
 class ProactiveRuntime:
     def __init__(self, dedupe_seconds=5.0, desktop_cooldown_seconds=30.0,
-                 max_causation_depth=MAX_CAUSATION_DEPTH, clock=None, inbox=None):
+                 max_causation_depth=MAX_CAUSATION_DEPTH, clock=None, inbox=None,
+                 context_rules=None):
         self.dedupe_seconds = float(dedupe_seconds)
         self.desktop_cooldown_seconds = float(desktop_cooldown_seconds)
         self.max_causation_depth = int(max_causation_depth)
         self._clock = clock or time.monotonic
         self._inbox = inbox
+        self._context_triggers = ContextTriggerEngine(context_rules)
         self._lock = threading.RLock()
         self._recent = {}
         self._last_by_type = {}
         self._decisions = []
+
+    def set_context_rules(self, rules):
+        with self._lock:
+            self._context_triggers.set_rules(rules)
+        return self.context_rules()
+
+    def context_rules(self):
+        with self._lock:
+            return self._context_triggers.rules()
 
     def _fingerprint(self, event):
         payload = {"type": event.get("type"), "payload": event.get("payload") or {}}
@@ -81,6 +97,21 @@ class ProactiveRuntime:
     @staticmethod
     def _is_proactive_session(payload):
         return str(payload.get("session_id") or "").startswith("proactive:")
+
+    def _context_decision(self, payload):
+        matches = self._context_triggers.match(payload)
+        if not matches:
+            return None
+        match = matches[0]
+        rule = match["rule"]
+        action = ProactiveAction.ASK_USER if rule["action"] == "ask_user" else ProactiveAction.NOTIFY
+        return ProactiveDecision(
+            action,
+            "context_rule:" + rule["id"],
+            notification=match["message"],
+            source="context_trigger",
+            priority=rule["priority"] if rule["priority"] in {"low", "normal", "high"} else "normal",
+        )
 
     def decide(self, event, trigger_goals=None):
         trigger_goals = list(trigger_goals or [])
@@ -136,6 +167,9 @@ class ProactiveRuntime:
             return ProactiveDecision(ProactiveAction.IGNORE, "question_without_text")
 
         if event_type == "desktop.changed":
+            contextual = self._context_decision(payload)
+            if contextual is not None:
+                return contextual
             changed_fields = payload.get("changed_fields") or []
             reason = "desktop_changed:" + ",".join(map(str, changed_fields or ["unknown"]))
             return ProactiveDecision(ProactiveAction.RECORD, reason)
@@ -179,8 +213,10 @@ class ProactiveRuntime:
         with self._lock:
             return list(self._decisions[-limit:])
 
+
 _runtime = None
 _runtime_lock = threading.Lock()
+
 
 def get_proactive_runtime():
     global _runtime
