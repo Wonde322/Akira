@@ -18,6 +18,8 @@ TASK_DIR = ROOT / "runtime" / "tasks"
 TASK_FILE = ROOT / "runtime" / "background_tasks.json"
 MAX_CONCURRENT_TASKS = 3
 MAX_STORED_TASKS = 100
+_TERMINAL_STATUSES = {"completed", "failed", "cancelled", "interrupted"}
+_VALID_STATUSES = _TERMINAL_STATUSES | {"queued", "running"}
 
 
 class TaskRuntime:
@@ -28,6 +30,28 @@ class TaskRuntime:
         self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="akira-bg")
         self._lock = threading.RLock(); self._tasks = {}; self._futures = {}; self._load()
 
+    @staticmethod
+    def _normalize_loaded_task(raw):
+        if not isinstance(raw, dict): return None
+        task_id = str(raw.get("id") or "").strip()
+        goal = str(raw.get("goal") or "").strip()
+        if not task_id or not goal: return None
+        status = str(raw.get("status") or "failed").strip().lower()
+        if status not in _VALID_STATUSES: status = "failed"
+        session_id = str(raw.get("session_id") or f"background:{task_id}").strip() or f"background:{task_id}"
+        normalized = dict(raw)
+        normalized.update({"id": task_id, "goal": goal, "session_id": session_id, "status": status})
+        try: normalized["causation_depth"] = max(0, int(raw.get("causation_depth") or 0))
+        except Exception: normalized["causation_depth"] = 0
+        for key in ("parent_event_id", "correlation_id"):
+            value = raw.get(key)
+            normalized[key] = str(value).strip() if value is not None and str(value).strip() else None
+        for key in ("created_at", "started_at", "finished_at"):
+            value = raw.get(key)
+            normalized[key] = str(value) if value is not None else None
+        normalized.setdefault("result", None); normalized.setdefault("error", None)
+        return normalized
+
     def _load(self):
         TASK_DIR.mkdir(parents=True, exist_ok=True)
         if not TASK_FILE.exists(): return
@@ -35,14 +59,16 @@ class TaskRuntime:
         except Exception: return
         if not isinstance(payload, list): return
         interrupted = []
-        for task in payload[-MAX_STORED_TASKS:]:
-            if not isinstance(task, dict) or not task.get("id"): continue
+        for raw in payload[-MAX_STORED_TASKS:]:
+            task = self._normalize_loaded_task(raw)
+            if task is None: continue
             if task.get("status") == "running":
                 task["status"] = "interrupted"; task["error"] = "Akira process was restarted before this background task completed."; task["finished_at"] = datetime.now().isoformat(timespec="seconds"); interrupted.append(dict(task))
             self._tasks[task["id"]] = task
         self._save()
         for task in interrupted:
             self._emit("task.interrupted", {"task_id":task.get("id"),"goal":task.get("goal"),"error":task.get("error"),"session_id":task.get("session_id")}, task=task)
+
     def _save(self):
         TASK_DIR.mkdir(parents=True, exist_ok=True); data=list(self._tasks.values())[-MAX_STORED_TASKS:]; temporary=TASK_FILE.with_suffix(".json.tmp"); temporary.write_text(json.dumps(data,ensure_ascii=False,indent=2),encoding="utf-8"); temporary.replace(TASK_FILE)
     def _active_count(self): return sum(1 for task in self._tasks.values() if task.get("status") in {"queued","running"})
@@ -74,7 +100,7 @@ class TaskRuntime:
         with self._lock:
             task=self._tasks.get(task_id)
             if task is None:return {"success":False,"error":"task_not_found","task_id":task_id}
-            if task.get("status") in {"completed","failed","cancelled","interrupted"}:return {"success":False,"error":"task_not_active","task_id":task_id,"status":task.get("status")}
+            if task.get("status") in _TERMINAL_STATUSES:return {"success":False,"error":"task_not_active","task_id":task_id,"status":task.get("status")}
             future=self._futures.get(task_id)
             if future is None or not future.cancel():return {"success":False,"error":"task_already_running","task_id":task_id,"status":task.get("status")}
             task["status"]="cancelled";task["error"]=str(reason);task["finished_at"]=datetime.now().isoformat(timespec="seconds");self._futures.pop(task_id,None);self._save();cancelled_task=dict(task)
@@ -131,7 +157,7 @@ class TaskRuntime:
         if not response.get("success"):return response
         task=response["task"];status=task.get("status")
         if status=="completed":return {"success":True,"ready":True,"task_id":task_id,"result":task.get("result"),"output":str(task.get("result") or "")}
-        if status in {"failed","cancelled","interrupted"}:return {"success":False,"ready":True,"task_id":task_id,"error":task.get("error"),"status":status,"output":f"Background task {status}: {task.get('error') or ''}"}
+        if status in _TERMINAL_STATUSES:return {"success":False,"ready":True,"task_id":task_id,"error":task.get("error"),"status":status,"output":f"Background task {status}: {task.get('error') or ''}"}
         return {"success":True,"ready":False,"task_id":task_id,"status":status,"output":f"Task {task_id} ещё выполняется."}
 
 _runtime=None;_runtime_lock=threading.Lock()
