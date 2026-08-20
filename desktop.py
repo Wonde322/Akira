@@ -48,9 +48,9 @@ def main():
     app.setApplicationName("Akira")
     app.setApplicationDisplayName("Akira")
 
-    from desktop_app.window import MainWindow
+    from desktop_app.proactive_window import ProactiveMainWindow
 
-    window = MainWindow()
+    window = ProactiveMainWindow()
     window.show()
 
     return app.exec()
