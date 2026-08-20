@@ -57,25 +57,27 @@ class TaskRuntime:
     def _active_count(self):
         return sum(1 for task in self._tasks.values() if task.get("status") in {"queued", "running"})
 
-    def _make_task(self, goal, session_id=None):
+    def _make_task(self, goal, session_id=None, *, parent_event_id=None, correlation_id=None, causation_depth=0):
         task_id = uuid.uuid4().hex[:12]
         now = datetime.now().isoformat(timespec="seconds")
         session_id = session_id or f"background:{task_id}"
-        correlation_id = None
-        if str(session_id).startswith("proactive:"):
+        if correlation_id is None and str(session_id).startswith("proactive:"):
             correlation_id = str(session_id).split(":", 1)[1] or None
+        try: causation_depth = max(0, int(causation_depth or 0))
+        except Exception: causation_depth = 0
         return {"id": task_id, "goal": str(goal).strip(), "session_id": session_id,
-                "correlation_id": correlation_id, "status": "queued", "created_at": now,
+                "parent_event_id": parent_event_id, "correlation_id": correlation_id,
+                "causation_depth": causation_depth, "status": "queued", "created_at": now,
                 "started_at": None, "finished_at": None, "result": None, "error": None}
 
-    def spawn(self, goal, session_id=None):
+    def spawn(self, goal, session_id=None, *, parent_event_id=None, correlation_id=None, causation_depth=0):
         goal = str(goal or "").strip()
         if not goal:
             return {"success": False, "error": "empty_goal", "output": "Нельзя создать background task с пустой целью."}
         with self._lock:
             if self._active_count() >= self.max_workers:
                 return {"success": False, "error": "background_capacity", "output": f"Достигнут лимит одновременно работающих background tasks: {self.max_workers}."}
-            task = self._make_task(goal, session_id); task_id = task["id"]
+            task = self._make_task(goal, session_id, parent_event_id=parent_event_id, correlation_id=correlation_id, causation_depth=causation_depth); task_id = task["id"]
             self._tasks[task_id] = task; self._save()
             future = self._executor.submit(self._run, task_id); self._futures[task_id] = future
             task["status"] = "running"; task["started_at"] = datetime.now().isoformat(timespec="seconds"); self._save()
@@ -125,11 +127,15 @@ class TaskRuntime:
         try:
             from event_bus import emit_event
             metadata = {"source": "task_runtime"}
-            correlation_id = (task or {}).get("correlation_id")
+            task = task or {}
+            correlation_id = task.get("correlation_id")
+            parent_event_id = task.get("parent_event_id")
             if correlation_id:
-                metadata["parent_event_id"] = correlation_id
                 metadata["correlation_id"] = correlation_id
-                metadata["causation_depth"] = 1
+            if parent_event_id:
+                metadata["parent_event_id"] = parent_event_id
+                try: metadata["causation_depth"] = max(0, int(task.get("causation_depth") or 0)) + 1
+                except Exception: metadata["causation_depth"] = 1
             emit_event(event_type, payload, **metadata)
         except Exception as event_error:
             print("[Akira task runtime] event error:", event_error)
