@@ -78,6 +78,10 @@ class ProactiveRuntime:
         error = str(payload.get("error") or "неизвестная ошибка").strip()
         return f"Не удалось завершить задачу «{goal}»: {error}"
 
+    @staticmethod
+    def _is_proactive_session(payload):
+        return str(payload.get("session_id") or "").startswith("proactive:")
+
     def decide(self, event, trigger_goals=None):
         trigger_goals = list(trigger_goals or [])
         event_type = str(event.get("type") or "")
@@ -115,10 +119,14 @@ class ProactiveRuntime:
             return ProactiveDecision(ProactiveAction.NOTIFY, "background_task_failed",
                                      notification=self._message_for_failure(payload), priority="high")
 
-        if event_type == "task.completed" and payload.get("notify"):
-            goal = str(payload.get("goal") or "задача")
-            return ProactiveDecision(ProactiveAction.NOTIFY, "background_task_completed",
-                                     notification=f"Задача завершена: {goal}")
+        if event_type == "task.completed":
+            notify = bool(payload.get("notify"))
+            proactive = self._is_proactive_session(payload)
+            if notify or proactive:
+                goal = str(payload.get("goal") or "задача")
+                reason = "proactive_task_completed" if proactive and not notify else "background_task_completed"
+                return ProactiveDecision(ProactiveAction.NOTIFY, reason,
+                                         notification=f"Задача завершена: {goal}")
 
         if event_type == "proactive.question":
             question = str(payload.get("question") or "").strip()
