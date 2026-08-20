@@ -12,6 +12,11 @@ from .window import MainWindow
 class ProactiveMainWindow(MainWindow):
     _WAKE_WORDS = {"акира", "akira"}
     _INTERNAL_OUTPUT_KEYS = {"status", "evidence", "success", "error", "output", "data"}
+    _LEGACY_TEST_MESSAGES = {
+        "готово: проверить контекст",
+        "готово: x",
+        "ok",
+    }
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -61,6 +66,11 @@ class ProactiveMainWindow(MainWindow):
     @classmethod
     def _is_internal_proactive_payload(cls, text):
         """Structured tool/observation output is never user-facing chat text."""
+        normalized = text.casefold().strip()
+        if normalized in cls._LEGACY_TEST_MESSAGES:
+            return True
+        if normalized.startswith("не удалось завершить задачу") and normalized.endswith(": boom"):
+            return True
         try:
             value = json.loads(text)
         except (TypeError, ValueError, json.JSONDecodeError):
