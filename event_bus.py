@@ -70,6 +70,19 @@ class EventBus:
    if current is not None and current.get("enabled"):return True
    if current is not None:self._forget_correlation(current,correlation_id);self._save_triggers()
   return False
+ def _record_results(self,results,correlation_id):
+  with self._lock:
+   for trigger,result in results:
+    current=self._triggers.get(trigger["id"])
+    if current is None:continue
+    if isinstance(result,Exception):
+     current["last_error"]=str(result);self._forget_correlation(current,correlation_id);continue
+    spawn=result.get("spawn") or {}
+    if spawn.get("success"):
+     current["last_fired_at"]=_iso();current["fire_count"]=int(current.get("fire_count") or 0)+1;current["last_task_id"]=spawn.get("task_id");current["last_error"]=None
+    elif result.get("decision",{}).get("action")=="spawn_task":current["last_error"]=spawn.get("error") or spawn.get("output")
+    else:self._forget_correlation(current,correlation_id)
+   self._save_triggers()
  def emit(self,event_type,payload=None,*,parent_event_id=None,correlation_id=None,causation_depth=0,source="system"):
   eid=uuid.uuid4().hex[:16];event={"id":eid,"type":str(event_type),"timestamp":_iso(),"payload":payload if isinstance(payload,dict) else {},"parent_event_id":parent_event_id,"correlation_id":correlation_id or parent_event_id or eid,"causation_depth":max(0,int(causation_depth or 0)),"source":str(source or "system")}
   with self._lock:
@@ -81,13 +94,7 @@ class EventBus:
    if eligible:self._save_triggers()
   try:
    from proactive_runtime import get_proactive_runtime
-   runtime=get_proactive_runtime();results=[]
-   if eligible:
-    for trigger in eligible:
-     if not self._trigger_still_enabled(trigger["id"],event.get("correlation_id")):continue
-     dispatched=dict(event);dispatched["trigger_id"]=trigger["id"]
-     results.append((trigger,runtime.handle(dispatched,[self._render_goal(trigger.get("goal",""),event)])))
-   else:results=[(None,runtime.handle(event,[]))]
+   runtime=get_proactive_runtime()
   except Exception as error:
    with self._lock:
     for trigger in eligible:
@@ -95,20 +102,22 @@ class EventBus:
      if current is not None:self._forget_correlation(current,event.get("correlation_id"))
     if eligible:self._save_triggers()
    return {"success":False,"event":event,"error":"proactive_runtime_error","output":str(error)}
+  results=[]
   if eligible:
-   with self._lock:
-    for trigger,result in results:
-     current=self._triggers.get(trigger["id"])
-     if current is None:continue
-     spawn=result.get("spawn") or {}
-     if spawn.get("success"):
-      current["last_fired_at"]=_iso();current["fire_count"]=int(current.get("fire_count") or 0)+1;current["last_task_id"]=spawn.get("task_id");current["last_error"]=None
-     elif result.get("decision",{}).get("action")=="spawn_task":current["last_error"]=spawn.get("error") or spawn.get("output")
-     else:self._forget_correlation(current,event.get("correlation_id"))
-    self._save_triggers()
-  launched=[item for _,result in results for item in result.get("launched",[])]
-  decisions=[result.get("decision") for _,result in results]
-  return {"success":True,"event":event,"launched":launched,"decision":decisions[0] if len(decisions)==1 else decisions,"output":json.dumps(launched,ensure_ascii=False)}
+   for trigger in eligible:
+    if not self._trigger_still_enabled(trigger["id"],event.get("correlation_id")):continue
+    dispatched=dict(event);dispatched["trigger_id"]=trigger["id"]
+    try:result=runtime.handle(dispatched,[self._render_goal(trigger.get("goal",""),event)])
+    except Exception as error:result=error
+    results.append((trigger,result))
+   self._record_results(results,event.get("correlation_id"))
+  else:
+   try:results=[(None,runtime.handle(event,[]))]
+   except Exception as error:return {"success":False,"event":event,"error":"proactive_runtime_error","output":str(error)}
+  launched=[item for _,result in results if not isinstance(result,Exception) for item in result.get("launched",[])]
+  decisions=[result.get("decision") for _,result in results if not isinstance(result,Exception)]
+  errors=[str(result) for _,result in results if isinstance(result,Exception)]
+  return {"success":not errors,"event":event,"launched":launched,"decision":decisions[0] if len(decisions)==1 else decisions,"error":"proactive_runtime_error" if errors else None,"output":str(errors[0]) if errors and not launched else json.dumps(launched,ensure_ascii=False)}
  def _cooldown_active(self,trigger):
   cooldown=int(trigger.get("cooldown_seconds") or 0);last=trigger.get("last_fired_at")
   if cooldown<=0 or not last:return False
