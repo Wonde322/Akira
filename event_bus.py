@@ -47,6 +47,23 @@ def _persisted_bool(value, default=True):
     return bool(value)
 
 
+def _json_safe(value, fallback=None):
+    try:
+        return json.loads(json.dumps(value, ensure_ascii=False, default=str))
+    except Exception:
+        return fallback
+
+
+def _metadata_text(value, default=None):
+    if value is None:
+        return default
+    try:
+        text = str(value).strip()
+    except Exception:
+        return default
+    return text or default
+
+
 class EventBus:
     def __init__(self):
         self._lock = threading.RLock()
@@ -188,7 +205,16 @@ class EventBus:
 
     def emit(self, event_type, payload=None, *, parent_event_id=None, correlation_id=None, causation_depth=0, source="system"):
         eid = uuid.uuid4().hex[:16]
-        event = {"id": eid, "type": str(event_type), "timestamp": _iso(), "payload": payload if isinstance(payload, dict) else {}, "parent_event_id": parent_event_id, "correlation_id": correlation_id or parent_event_id or eid, "causation_depth": max(0, _persisted_int(causation_depth, 0)), "source": str(source or "system")}
+        event_type = _metadata_text(event_type, "")
+        if not event_type:
+            return {"success": False, "error": "empty_event_type", "output": "Не указан event_type."}
+        safe_payload = _json_safe(payload, {}) if isinstance(payload, dict) else {}
+        if not isinstance(safe_payload, dict):
+            safe_payload = {}
+        parent_event_id = _metadata_text(parent_event_id)
+        correlation_id = _metadata_text(correlation_id) or parent_event_id or eid
+        source = _metadata_text(source, "system")
+        event = {"id": eid, "type": event_type, "timestamp": _iso(), "payload": safe_payload, "parent_event_id": parent_event_id, "correlation_id": correlation_id, "causation_depth": max(0, _persisted_int(causation_depth, 0)), "source": source}
         with self._lock:
             self._append_event(event)
             matched = [dict(t) for t in self._triggers.values() if t.get("enabled") and t.get("event_type") == event["type"]]
@@ -257,7 +283,7 @@ class EventBus:
     def _render_goal(self, goal, event):
         payload = event.get("payload", {})
         result = str(goal)
-        for key, value in {"{{event.type}}": str(event.get("type", "")), "{{event.id}}": str(event.get("id", "")), "{{event.timestamp}}": str(event.get("timestamp", "")), "{{event.payload}}": json.dumps(payload, ensure_ascii=False)}.items():
+        for key, value in {"{{event.type}}": str(event.get("type", "")), "{{event.id}}": str(event.get("id", "")), "{{event.timestamp}}": str(event.get("timestamp", "")), "{{event.payload}}": json.dumps(payload, ensure_ascii=False, default=str)}.items():
             result = result.replace(key, value)
         return result
 
