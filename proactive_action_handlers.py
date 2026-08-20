@@ -5,8 +5,9 @@ from __future__ import annotations
 class ProactiveActionHandlers:
     """Translate explicit proactive selections into bounded background work."""
 
-    def __init__(self, spawn):
+    def __init__(self, spawn, lifecycle=None):
         self._spawn = spawn
+        self._lifecycle = lifecycle
 
     @staticmethod
     def _goal(payload):
@@ -36,11 +37,20 @@ class ProactiveActionHandlers:
             return {"handled": False}
 
         result = self._spawn(goal, session_id="proactive:" + str(correlation_id))
-        return {"handled": True, "success": bool(result.get("success")), "kind": event_type, "goal": goal, "spawn": result}
+        lifecycle_item = None
+        if result.get("success") and self._lifecycle is not None:
+            lifecycle_item = self._lifecycle.started(
+                result.get("task_id"), goal, kind=event_type, correlation_id=correlation_id,
+            )
+        return {"handled": True, "success": bool(result.get("success")), "kind": event_type,
+                "goal": goal, "spawn": result, "lifecycle": lifecycle_item}
 
 
-def get_proactive_action_handlers(spawn=None):
+def get_proactive_action_handlers(spawn=None, lifecycle=None):
     if spawn is None:
         from task_runtime import get_runtime
         spawn = get_runtime().spawn
-    return ProactiveActionHandlers(spawn)
+    if lifecycle is None:
+        from proactive_action_lifecycle import get_proactive_action_lifecycle
+        lifecycle = get_proactive_action_lifecycle()
+    return ProactiveActionHandlers(spawn, lifecycle=lifecycle)
