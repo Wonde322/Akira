@@ -1,5 +1,6 @@
 import json
 
+import sitecustomize  # noqa: F401
 import memory
 
 
