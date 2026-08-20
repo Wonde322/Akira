@@ -1,8 +1,4 @@
-"""Event-driven proactive runtime for Akira.
-
-The event bus transports facts. This runtime decides whether an event should
-be ignored, remembered, shown to the user, or turned into autonomous work.
-"""
+"""Event-driven proactive runtime for Akira."""
 from __future__ import annotations
 
 import hashlib
@@ -44,26 +40,65 @@ class ProactiveDecision:
 class ProactiveRuntime:
     def __init__(self, dedupe_seconds=5.0, desktop_cooldown_seconds=30.0,
                  max_causation_depth=MAX_CAUSATION_DEPTH, clock=None, inbox=None,
-                 context_rules=None):
+                 context_rules=None, context_rule_store=None):
         self.dedupe_seconds = float(dedupe_seconds)
         self.desktop_cooldown_seconds = float(desktop_cooldown_seconds)
         self.max_causation_depth = int(max_causation_depth)
         self._clock = clock or time.monotonic
         self._inbox = inbox
-        self._context_triggers = ContextTriggerEngine(context_rules)
+        if context_rule_store is None:
+            from context_rule_store import get_context_rule_store
+            context_rule_store = get_context_rule_store()
+        self._context_rule_store = context_rule_store
+        initial_rules = list(context_rules) if context_rules is not None else self._context_rule_store.active()
+        self._context_triggers = ContextTriggerEngine(initial_rules)
         self._lock = threading.RLock()
         self._recent = {}
         self._last_by_type = {}
         self._decisions = []
 
+    def _refresh_context_rules(self):
+        self._context_triggers.set_rules(self._context_rule_store.active())
+
     def set_context_rules(self, rules):
         with self._lock:
-            self._context_triggers.set_rules(rules)
+            for existing in self._context_rule_store.list():
+                self._context_rule_store.remove(existing["id"])
+            for rule in rules or []:
+                self._context_rule_store.add(rule)
+            self._refresh_context_rules()
         return self.context_rules()
 
     def context_rules(self):
+        return self._context_rule_store.list()
+
+    def add_context_rule(self, app=None, title=None, message=None, action="notify",
+                         on_transition=True, priority="normal"):
+        rule = self._context_rule_store.add({
+            "app": app,
+            "title": title,
+            "message": message,
+            "action": action,
+            "on_transition": on_transition,
+            "priority": priority,
+        })
         with self._lock:
-            return self._context_triggers.rules()
+            self._refresh_context_rules()
+        return rule
+
+    def remove_context_rule(self, rule_id):
+        removed = self._context_rule_store.remove(rule_id)
+        if removed:
+            with self._lock:
+                self._refresh_context_rules()
+        return removed
+
+    def set_context_rule_enabled(self, rule_id, enabled):
+        rule = self._context_rule_store.set_enabled(rule_id, enabled)
+        if rule is not None:
+            with self._lock:
+                self._refresh_context_rules()
+        return rule
 
     def _fingerprint(self, event):
         payload = {"type": event.get("type"), "payload": event.get("payload") or {}}
@@ -77,12 +112,9 @@ class ProactiveRuntime:
             return 0
 
     def _record(self, event, decision):
-        item = {
-            "event_id": event.get("id"),
-            "event_type": event.get("type"),
-            "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
-            "decision": decision.to_dict(),
-        }
+        item = {"event_id": event.get("id"), "event_type": event.get("type"),
+                "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "decision": decision.to_dict()}
         with self._lock:
             self._decisions.append(item)
             del self._decisions[:-100]
@@ -105,23 +137,17 @@ class ProactiveRuntime:
         match = matches[0]
         rule = match["rule"]
         action = ProactiveAction.ASK_USER if rule["action"] == "ask_user" else ProactiveAction.NOTIFY
-        return ProactiveDecision(
-            action,
-            "context_rule:" + rule["id"],
-            notification=match["message"],
-            source="context_trigger",
-            priority=rule["priority"] if rule["priority"] in {"low", "normal", "high"} else "normal",
-        )
+        return ProactiveDecision(action, "context_rule:" + rule["id"], notification=match["message"],
+                                 source="context_trigger",
+                                 priority=rule["priority"] if rule["priority"] in {"low", "normal", "high"} else "normal")
 
     def decide(self, event, trigger_goals=None):
         trigger_goals = list(trigger_goals or [])
         event_type = str(event.get("type") or "")
         payload = event.get("payload") or {}
         now = self._clock()
-
         if self._depth(event) >= self.max_causation_depth:
             return ProactiveDecision(ProactiveAction.IGNORE, "max_causation_depth")
-
         fingerprint = self._fingerprint(event)
         with self._lock:
             last = self._recent.get(fingerprint)
@@ -134,46 +160,32 @@ class ProactiveRuntime:
             if event_type == "desktop.changed" and last_type is not None and now - last_type < self.desktop_cooldown_seconds:
                 return ProactiveDecision(ProactiveAction.RECORD, "desktop_cooldown")
             self._last_by_type[event_type] = now
-
         if event_type == "schedule.due":
             goal = str(payload.get("goal") or "").strip()
             if not goal:
                 return ProactiveDecision(ProactiveAction.IGNORE, "scheduled_event_without_goal")
-            return ProactiveDecision(ProactiveAction.SPAWN_TASK, "explicit_schedule", goal=goal,
-                                     source="scheduler", priority="high")
-
+            return ProactiveDecision(ProactiveAction.SPAWN_TASK, "explicit_schedule", goal=goal, source="scheduler", priority="high")
         if trigger_goals:
-            return ProactiveDecision(ProactiveAction.SPAWN_TASK, "matched_trigger",
-                                     goal=trigger_goals[0], source="trigger")
-
+            return ProactiveDecision(ProactiveAction.SPAWN_TASK, "matched_trigger", goal=trigger_goals[0], source="trigger")
         if event_type == "task.failed":
-            return ProactiveDecision(ProactiveAction.NOTIFY, "background_task_failed",
-                                     notification=self._message_for_failure(payload), priority="high")
-
+            return ProactiveDecision(ProactiveAction.NOTIFY, "background_task_failed", notification=self._message_for_failure(payload), priority="high")
         if event_type == "task.completed":
-            notify = bool(payload.get("notify"))
-            proactive = self._is_proactive_session(payload)
+            notify = bool(payload.get("notify")); proactive = self._is_proactive_session(payload)
             if notify or proactive:
                 goal = str(payload.get("goal") or "задача")
                 reason = "proactive_task_completed" if proactive and not notify else "background_task_completed"
-                return ProactiveDecision(ProactiveAction.NOTIFY, reason,
-                                         notification=f"Задача завершена: {goal}")
-
+                return ProactiveDecision(ProactiveAction.NOTIFY, reason, notification=f"Задача завершена: {goal}")
         if event_type == "proactive.question":
             question = str(payload.get("question") or "").strip()
             if question:
-                return ProactiveDecision(ProactiveAction.ASK_USER, "explicit_question",
-                                         notification=question, priority="high")
+                return ProactiveDecision(ProactiveAction.ASK_USER, "explicit_question", notification=question, priority="high")
             return ProactiveDecision(ProactiveAction.IGNORE, "question_without_text")
-
         if event_type == "desktop.changed":
             contextual = self._context_decision(payload)
             if contextual is not None:
                 return contextual
             changed_fields = payload.get("changed_fields") or []
-            reason = "desktop_changed:" + ",".join(map(str, changed_fields or ["unknown"]))
-            return ProactiveDecision(ProactiveAction.RECORD, reason)
-
+            return ProactiveDecision(ProactiveAction.RECORD, "desktop_changed:" + ",".join(map(str, changed_fields or ["unknown"])))
         return ProactiveDecision(ProactiveAction.RECORD, "no_actionable_policy")
 
     def _push_attention(self, event, decision):
@@ -189,8 +201,7 @@ class ProactiveRuntime:
     def handle(self, event, trigger_goals=None):
         decision = self.decide(event, trigger_goals)
         record = self._record(event, decision)
-        result = {"success": True, "event": event, "decision": decision.to_dict(),
-                  "record": record, "launched": [], "attention": None}
+        result = {"success": True, "event": event, "decision": decision.to_dict(), "record": record, "launched": [], "attention": None}
         attention = self._push_attention(event, decision)
         if attention is not None:
             result["attention"] = attention
@@ -205,10 +216,8 @@ class ProactiveRuntime:
         return result
 
     def recent_decisions(self, limit=20):
-        try:
-            limit = int(limit)
-        except Exception:
-            limit = 20
+        try: limit = int(limit)
+        except Exception: limit = 20
         limit = max(1, min(limit, 100))
         with self._lock:
             return list(self._decisions[-limit:])
@@ -216,7 +225,6 @@ class ProactiveRuntime:
 
 _runtime = None
 _runtime_lock = threading.Lock()
-
 
 def get_proactive_runtime():
     global _runtime
