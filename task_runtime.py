@@ -81,6 +81,7 @@ class TaskRuntime:
         self._emit("task.cancelled",{"task_id":task_id,"goal":cancelled_task.get("goal"),"error":cancelled_task.get("error"),"session_id":cancelled_task.get("session_id")},task=cancelled_task)
         return {"success":True,"task_id":task_id,"status":"cancelled"}
     def _run(self,task_id):
+        event_type = None; event_payload = None; event_task = None
         try:
             with self._lock:
                 task=self._tasks.get(task_id)
@@ -91,14 +92,17 @@ class TaskRuntime:
             with self._lock:
                 task=self._tasks.get(task_id)
                 if task is None or task.get("status")=="cancelled":return
-                task["status"]="completed";task["result"]=str(result);task["finished_at"]=datetime.now().isoformat(timespec="seconds");task["error"]=None;self._save();self._emit("task.completed",{"task_id":task_id,"goal":goal,"result":str(result),"session_id":session_id},task=task)
+                task["status"]="completed";task["result"]=str(result);task["finished_at"]=datetime.now().isoformat(timespec="seconds");task["error"]=None;self._save()
+                event_type="task.completed";event_payload={"task_id":task_id,"goal":goal,"result":str(result),"session_id":session_id};event_task=dict(task)
         except Exception as error:
             with self._lock:
                 task=self._tasks.get(task_id)
                 if task is None or task.get("status")=="cancelled":return
-                task["status"]="failed";task["error"]=str(error);task["result"]=None;task["finished_at"]=datetime.now().isoformat(timespec="seconds");task["traceback"]=traceback.format_exc()[-4000:];self._save();self._emit("task.failed",{"task_id":task_id,"goal":task.get("goal"),"error":str(error),"session_id":task.get("session_id")},task=task)
+                task["status"]="failed";task["error"]=str(error);task["result"]=None;task["finished_at"]=datetime.now().isoformat(timespec="seconds");task["traceback"]=traceback.format_exc()[-4000:];self._save()
+                event_type="task.failed";event_payload={"task_id":task_id,"goal":task.get("goal"),"error":str(error),"session_id":task.get("session_id")};event_task=dict(task)
         finally:
             with self._lock:self._futures.pop(task_id,None);self._save()
+        if event_type is not None:self._emit(event_type,event_payload,task=event_task)
     @staticmethod
     def _emit(event_type,payload,task=None):
         try:
