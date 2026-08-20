@@ -53,7 +53,7 @@ class ContextTriggerEngine:
     def set_rules(self, rules):
         cleaned = []
         for index, rule in enumerate(rules or []):
-            if not isinstance(rule, dict):
+            if not isinstance(rule, dict) or not rule.get("enabled", True):
                 continue
             action = _text(rule.get("action") or "notify").lower()
             if action not in {"notify", "ask_user"}:
@@ -91,9 +91,5 @@ class ContextTriggerEngine:
                 f"Контекст изменился: {current['app']}"
                 + (f" — {current['title']}" if current["title"] else "")
             )
-            matches.append({
-                "rule": dict(rule),
-                "message": message,
-                "context": delta,
-            })
+            matches.append({"rule": dict(rule), "message": message, "context": delta})
         return matches
