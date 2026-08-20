@@ -68,5 +68,9 @@
   "capability_resolve": "auto",
   "capability_snapshot": "auto",
   "browser_click": "auto",
-  "browser_type": "auto"
+  "browser_type": "auto",
+  "create_context_rule": "auto",
+  "list_context_rules": "auto",
+  "remove_context_rule": "auto",
+  "set_context_rule_enabled": "auto"
 }
