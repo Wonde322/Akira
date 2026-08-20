@@ -34,10 +34,12 @@ def _normalize_permissions(payload):
     normalized = {}
     for name, default in DEFAULT_PERMISSIONS.items():
         level = payload.get(name, default)
-        if isinstance(level, str):
-            level = level.strip().lower()
-        if level not in _VALID_LEVELS:
+        if not isinstance(level, str):
             level = default
+        else:
+            level = level.strip().lower()
+            if level not in _VALID_LEVELS:
+                level = default
         normalized[name] = level
     return normalized
 
@@ -74,7 +76,7 @@ class PermissionManager:
     def set_permission(self, tool_name, level):
         if tool_name not in DEFAULT_PERMISSIONS:
             return "Неизвестный инструмент."
-        if level not in _VALID_LEVELS:
+        if not isinstance(level, str) or level not in _VALID_LEVELS:
             return "Недопустимый уровень разрешения."
         with self._lock:
             permissions = self._get()
