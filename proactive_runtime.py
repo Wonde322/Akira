@@ -39,9 +39,7 @@ class ProactiveDecision:
     source_task_id: str | None = None
 
     def to_dict(self):
-        data = asdict(self)
-        data["action"] = self.action.value
-        return data
+        data = asdict(self); data["action"] = self.action.value; return data
 
 
 class ProactiveRuntime:
@@ -50,24 +48,24 @@ class ProactiveRuntime:
                  context_rules=None, context_rule_store=None, reasoning_policy=None,
                  action_proposer=None, lifecycle=None, attention_budget=None,
                  orchestrator=None):
-        self.dedupe_seconds = float(dedupe_seconds); self.desktop_cooldown_seconds = float(desktop_cooldown_seconds); self.max_causation_depth = int(max_causation_depth); self._clock = clock or time.monotonic; self._inbox = inbox
-        self._reasoning_policy = reasoning_policy or get_proactive_reasoning_policy(); self._action_proposer = action_proposer or get_proactive_action_proposer(); self._attention_budget = attention_budget or get_proactive_attention_budget(); self._orchestrator = orchestrator or get_proactive_orchestrator()
+        self.dedupe_seconds=float(dedupe_seconds);self.desktop_cooldown_seconds=float(desktop_cooldown_seconds);self.max_causation_depth=int(max_causation_depth);self._clock=clock or time.monotonic;self._inbox=inbox
+        self._reasoning_policy=reasoning_policy or get_proactive_reasoning_policy();self._action_proposer=action_proposer or get_proactive_action_proposer();self._attention_budget=attention_budget or get_proactive_attention_budget();self._orchestrator=orchestrator or get_proactive_orchestrator()
         if lifecycle is None:
             from proactive_action_lifecycle import get_proactive_action_lifecycle
-            lifecycle = get_proactive_action_lifecycle()
-        self._lifecycle = lifecycle
+            lifecycle=get_proactive_action_lifecycle()
+        self._lifecycle=lifecycle
         if context_rule_store is None:
             from context_rule_store import get_context_rule_store
-            context_rule_store = get_context_rule_store()
-        self._context_rule_store = context_rule_store; self._context_triggers = ContextTriggerEngine(list(context_rules) if context_rules is not None else self._context_rule_store.active()); self._lock = threading.RLock(); self._recent = {}; self._last_by_type = {}; self._decisions = []; self._autonomous_sources = {}
-    def _refresh_context_rules(self): self._context_triggers.set_rules(self._context_rule_store.active())
+            context_rule_store=get_context_rule_store()
+        self._context_rule_store=context_rule_store;self._context_triggers=ContextTriggerEngine(list(context_rules) if context_rules is not None else self._context_rule_store.active());self._lock=threading.RLock();self._recent={};self._last_by_type={};self._decisions=[];self._autonomous_sources={}
+    def _refresh_context_rules(self):self._context_triggers.set_rules(self._context_rule_store.active())
     def set_context_rules(self,rules):
         with self._lock:
-            for existing in self._context_rule_store.list(): self._context_rule_store.remove(existing["id"])
-            for rule in rules or []: self._context_rule_store.add(rule)
+            for existing in self._context_rule_store.list():self._context_rule_store.remove(existing["id"])
+            for rule in rules or []:self._context_rule_store.add(rule)
             self._refresh_context_rules()
         return self.context_rules()
-    def context_rules(self): return self._context_rule_store.list()
+    def context_rules(self):return self._context_rule_store.list()
     def add_context_rule(self,app=None,title=None,message=None,action="notify",on_transition=True,priority="normal"):
         rule=self._context_rule_store.add({"app":app,"title":title,"message":message,"action":action,"on_transition":on_transition,"priority":priority})
         with self._lock:self._refresh_context_rules()
@@ -82,7 +80,7 @@ class ProactiveRuntime:
         if rule is not None:
             with self._lock:self._refresh_context_rules()
         return rule
-    def _fingerprint(self,event): return hashlib.sha256(json.dumps({"type":event.get("type"),"payload":event.get("payload") or {}},ensure_ascii=False,sort_keys=True,default=str).encode("utf-8")).hexdigest()
+    def _fingerprint(self,event):return hashlib.sha256(json.dumps({"type":event.get("type"),"payload":event.get("payload") or {}},ensure_ascii=False,sort_keys=True,default=str).encode("utf-8")).hexdigest()
     def _depth(self,event):
         try:return int(event.get("causation_depth") or 0)
         except Exception:return 0
@@ -91,7 +89,7 @@ class ProactiveRuntime:
         with self._lock:self._decisions.append(item);del self._decisions[:-100]
         return item
     @staticmethod
-    def _message_for_failure(payload): return f"Не удалось завершить задачу «{str(payload.get('goal') or 'фоновой задачи').strip()}»: {str(payload.get('error') or 'неизвестная ошибка').strip()}"
+    def _message_for_failure(payload):return f"Не удалось завершить задачу «{str(payload.get('goal') or 'фоновой задачи').strip()}»: {str(payload.get('error') or 'неизвестная ошибка').strip()}"
     @staticmethod
     def _message_for_completion(payload):
         goal=str(payload.get("goal") or "задача").strip();result=str(payload.get("result") or "").strip()
@@ -99,20 +97,21 @@ class ProactiveRuntime:
         if len(result)>MAX_COMPLETION_RESULT_CHARS:result=result[:MAX_COMPLETION_RESULT_CHARS].rstrip()+"…"
         return f"Готово: {goal}\n\n{result}"
     @staticmethod
-    def _is_proactive_session(payload): return str(payload.get("session_id") or "").startswith("proactive:")
+    def _is_proactive_session(payload):return str(payload.get("session_id") or "").startswith("proactive:")
     def _release_autonomous(self,payload):
         task_id=str(payload.get("task_id") or "")
         if not task_id:return
         with self._lock:source=self._autonomous_sources.pop(task_id,None)
         if source:self._orchestrator.release(source)
     def _update_lifecycle(self,event_type,payload):
-        if event_type in {"task.completed","task.failed","task.cancelled"}:self._release_autonomous(payload)
+        if event_type in {"task.completed","task.failed","task.cancelled","task.interrupted"}:self._release_autonomous(payload)
         if not self._is_proactive_session(payload):return None
         task_id=payload.get("task_id")
         if not task_id:return None
         if event_type=="task.completed":return self._lifecycle.completed(task_id,payload.get("result"))
         if event_type=="task.failed":return self._lifecycle.failed(task_id,payload.get("error"))
         if event_type=="task.cancelled":return self._lifecycle.cancelled(task_id,payload.get("error") or "Cancelled by user")
+        if event_type=="task.interrupted":return self._lifecycle.interrupted(task_id,payload.get("error") or "Akira was restarted before this action completed.")
         return None
     def _context_decision(self,payload):
         matches=self._context_triggers.match(payload)
