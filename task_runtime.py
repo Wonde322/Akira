@@ -64,7 +64,7 @@ class TaskRuntime:
                 future=self._executor.submit(self._run,task_id)
                 if task.get("status") in {"queued","running"}:self._futures[task_id]=future
             except Exception as error:
-                task["status"]="failed";task["error"]=str(error);task["result"]=None;task["finished_at"]=datetime.now().isoformat(timespec="seconds");self._save();failed_task=dict(task)
+                task["status"]="failed";task["started_at"]=None;task["error"]=str(error);task["result"]=None;task["finished_at"]=datetime.now().isoformat(timespec="seconds");self._save();failed_task=dict(task)
         if failed_task is not None:
             self._emit("task.failed",{"task_id":task_id,"goal":failed_task.get("goal"),"error":failed_task.get("error"),"session_id":failed_task.get("session_id")},task=failed_task)
             return {"success":False,"error":"task_submit_failed","task_id":task_id,"status":"failed","output":f"Не удалось запустить background task: {failed_task.get('error')}"}
