@@ -50,8 +50,7 @@ class VoiceEngine(QObject):
         self._commands.put((kind, payload))
 
     def capture_once(self): self._submit("capture")
-    def cancel_capture(self):
-        self._cancel_event.set(); self._submit("cancel")
+    def cancel_capture(self): self._cancel_event.set(); self._submit("cancel")
     def set_dialogue(self, enabled): self._submit("dialogue", enabled)
     def set_wake_enabled(self, enabled): self._submit("wake", enabled)
     def speak(self, text): self._submit("speak", text)
@@ -99,7 +98,7 @@ class VoiceEngine(QObject):
                 if kind == "cancel":
                     self._cancel_event.set(); self.mic_capture.emit(False); self._emit_state(self.IDLE); continue
                 if kind == "dialogue":
-                    self._set_dialogue(bool(payload));
+                    self._set_dialogue(bool(payload))
                     if not self._dialogue: self._emit_state(self.IDLE)
                     continue
                 if kind == "end_turn":
@@ -152,7 +151,14 @@ class VoiceEngine(QObject):
 
     def _wake_listen(self, dlg):
         if not self._audio_ok: time.sleep(0.2); return
-        audio = dlg.record_utterance(cancel_event=self._interrupt, end_silence_ms=getattr(dlg, "WAKE_END_SILENCE_MS", 450))
+        try:
+            audio = dlg.record_utterance(
+                cancel_event=self._interrupt,
+                end_silence_ms=getattr(dlg, "WAKE_END_SILENCE_MS", 450),
+            )
+        except TypeError:
+            # Keep compatibility with older implementations and lightweight test fakes.
+            audio = dlg.record_utterance(cancel_event=self._interrupt)
         if audio is None: return
         text = self._safe_transcribe(dlg, audio)
         if not text: return
