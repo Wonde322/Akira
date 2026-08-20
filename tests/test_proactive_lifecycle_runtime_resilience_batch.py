@@ -63,7 +63,7 @@ def test_recover_ignores_runtime_exception(tmp_path):
 def test_recover_ignores_malformed_runtime_response(tmp_path):
     lifecycle = ProactiveActionLifecycle(path=tmp_path / "lifecycle.json")
     lifecycle.started("x", "goal")
-    assert ProactiveActionController(Runtime(listed=[]), lifecycle).recover() == []
+    assert ProactiveActionController(Runtime(listed={"tasks": "nope"}), lifecycle).recover() == []
     assert lifecycle.get("x")["status"] == "running"
 
 
