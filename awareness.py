@@ -12,7 +12,7 @@ STATE_FILE = ROOT / "runtime" / "awareness_state.json"
 
 
 class AwarenessRuntime:
-    def __init__(self, enabled=True, pattern_engine=None, task_context_linker=None):
+    def __init__(self, enabled=True, pattern_engine=None, task_context_linker=None, goal_context_linker=None):
         self.enabled = bool(enabled)
         self._lock = threading.RLock()
         self._last_fingerprint = None
@@ -29,6 +29,10 @@ class AwarenessRuntime:
             from task_context import TaskContextLinker
             task_context_linker = TaskContextLinker()
         self._task_context_linker = task_context_linker
+        if goal_context_linker is None:
+            from goal_context import GoalContextLinker
+            goal_context_linker = GoalContextLinker()
+        self._goal_context_linker = goal_context_linker
         self._load()
 
     def _load(self):
@@ -69,6 +73,12 @@ class AwarenessRuntime:
             active_task = None
         if active_task is not None:
             item["active_task"] = active_task
+        try:
+            active_goal = self._goal_context_linker.match(context, active_task=active_task)
+        except Exception:
+            active_goal = None
+        if active_goal is not None:
+            item["active_goal"] = active_goal
         return item
 
     @staticmethod
