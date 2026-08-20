@@ -12,6 +12,7 @@ from enum import Enum
 from context_triggers import ContextTriggerEngine
 from proactive_policy import get_proactive_reasoning_policy
 from proactive_action_proposals import get_proactive_action_proposer
+from proactive_attention_budget import get_proactive_attention_budget
 
 MAX_CAUSATION_DEPTH = 3
 MAX_COMPLETION_RESULT_CHARS = 1200
@@ -45,7 +46,7 @@ class ProactiveRuntime:
     def __init__(self, dedupe_seconds=5.0, desktop_cooldown_seconds=30.0,
                  max_causation_depth=MAX_CAUSATION_DEPTH, clock=None, inbox=None,
                  context_rules=None, context_rule_store=None, reasoning_policy=None,
-                 action_proposer=None, lifecycle=None):
+                 action_proposer=None, lifecycle=None, attention_budget=None):
         self.dedupe_seconds = float(dedupe_seconds)
         self.desktop_cooldown_seconds = float(desktop_cooldown_seconds)
         self.max_causation_depth = int(max_causation_depth)
@@ -53,6 +54,7 @@ class ProactiveRuntime:
         self._inbox = inbox
         self._reasoning_policy = reasoning_policy or get_proactive_reasoning_policy()
         self._action_proposer = action_proposer or get_proactive_action_proposer()
+        self._attention_budget = attention_budget or get_proactive_attention_budget()
         if lifecycle is None:
             from proactive_action_lifecycle import get_proactive_action_lifecycle
             lifecycle = get_proactive_action_lifecycle()
@@ -165,6 +167,8 @@ class ProactiveRuntime:
         return ProactiveDecision(ProactiveAction.RECORD,"no_actionable_policy")
     def _push_attention(self,event,decision):
         if decision.action not in {ProactiveAction.NOTIFY,ProactiveAction.ASK_USER}:return None
+        if not self._attention_budget.allow(decision.action, decision.priority):
+            return {"suppressed": True, "reason": "attention_budget"}
         inbox=self._inbox
         if inbox is None:
             from proactive_inbox import get_proactive_inbox
