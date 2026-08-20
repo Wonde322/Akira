@@ -200,7 +200,15 @@ class ProactiveRuntime:
         if attention is not None:result["attention"]=attention
         if decision.action!=ProactiveAction.SPAWN_TASK:return result
         from task_runtime import get_runtime
-        correlation_id=event.get("correlation_id") or event.get("id");spawn_result=get_runtime().spawn(decision.goal,session_id="proactive:"+str(correlation_id));result["spawn"]=spawn_result
+        parent_event_id = event.get("id") or None
+        correlation_id = event.get("correlation_id") or parent_event_id
+        spawn_result=get_runtime().spawn(
+            decision.goal,
+            session_id="proactive:"+str(correlation_id),
+            parent_event_id=parent_event_id,
+            correlation_id=correlation_id,
+            causation_depth=self._depth(event),
+        );result["spawn"]=spawn_result
         if spawn_result.get("success"):
             spawned_task_id = spawn_result.get("task_id")
             result["launched"].append({"task_id":spawned_task_id,"reason":decision.reason})
