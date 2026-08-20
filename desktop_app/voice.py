@@ -34,16 +34,30 @@ class VoiceEngine(QObject):
         self._thread = None
 
     def start(self):
-        if self._thread is None:
-            self._thread = threading.Thread(target=self._run, daemon=True, name="voice-engine")
-            self._thread.start()
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._thread = None
+        self._commands = queue.Queue()
+        self._stop_event.clear()
+        self._cancel_event.clear()
+        self._interrupt.clear()
+        self._listening = True
+        self._audio_ok = False
+        self._set_dialogue(False)
+        self._thread = threading.Thread(target=self._run, daemon=True, name="voice-engine")
+        self._thread.start()
 
     def stop(self):
         self._stop_event.set()
         self._interrupt.set()
         self._commands.put(("stop", None))
-        if self._thread is not None:
-            self._thread.join(timeout=3)
+        thread = self._thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=3)
+        if thread is not None and not thread.is_alive():
+            self._thread = None
+        self._audio_ok = False
+        self._set_dialogue(False)
 
     def _submit(self, kind, payload=None):
         self._interrupt.set()
@@ -81,6 +95,7 @@ class VoiceEngine(QObject):
         try:
             self._loop(dlg)
         finally:
+            self._audio_ok = False
             if stream is not None:
                 stream.__exit__(None, None, None)
 
@@ -152,12 +167,8 @@ class VoiceEngine(QObject):
     def _wake_listen(self, dlg):
         if not self._audio_ok: time.sleep(0.2); return
         try:
-            audio = dlg.record_utterance(
-                cancel_event=self._interrupt,
-                end_silence_ms=getattr(dlg, "WAKE_END_SILENCE_MS", 450),
-            )
+            audio = dlg.record_utterance(cancel_event=self._interrupt, end_silence_ms=getattr(dlg, "WAKE_END_SILENCE_MS", 450))
         except TypeError:
-            # Keep compatibility with older implementations and lightweight test fakes.
             audio = dlg.record_utterance(cancel_event=self._interrupt)
         if audio is None: return
         text = self._safe_transcribe(dlg, audio)
