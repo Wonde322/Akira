@@ -106,12 +106,13 @@ class ProactiveRuntime:
         with self._lock:source=self._autonomous_sources.pop(task_id,None)
         if source:self._orchestrator.release(source)
     def _update_lifecycle(self,event_type,payload):
-        if event_type in {"task.completed","task.failed"}:self._release_autonomous(payload)
+        if event_type in {"task.completed","task.failed","task.cancelled"}:self._release_autonomous(payload)
         if not self._is_proactive_session(payload):return None
         task_id=payload.get("task_id")
         if not task_id:return None
         if event_type=="task.completed":return self._lifecycle.completed(task_id,payload.get("result"))
         if event_type=="task.failed":return self._lifecycle.failed(task_id,payload.get("error"))
+        if event_type=="task.cancelled":return self._lifecycle.cancelled(task_id,payload.get("error") or "Cancelled by user")
         return None
     def _context_decision(self,payload):
         matches=self._context_triggers.match(payload)
