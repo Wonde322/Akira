@@ -43,6 +43,21 @@ class ProactiveReasoningPolicy:
             confidence = 0.0
         return goal or None, max(0.0, min(1.0, confidence))
 
+    @staticmethod
+    def _goal_context(payload):
+        goal = payload.get("active_goal") or {}
+        if not isinstance(goal, dict):
+            return None, 0.0, "normal"
+        title = str(goal.get("title") or goal.get("goal") or "").strip() or None
+        try:
+            urgency = float(goal.get("urgency") or 0.0)
+        except (TypeError, ValueError):
+            urgency = 0.0
+        priority = str(goal.get("priority") or "normal").lower()
+        if priority not in {"low", "normal", "high", "critical"}:
+            priority = "normal"
+        return title, max(0.0, min(1.0, urgency)), priority
+
     def _respect_feedback(self, recommendation):
         if recommendation.action != "ask_user":
             return recommendation
@@ -53,13 +68,30 @@ class ProactiveReasoningPolicy:
             recommendation.notification, priority="low", goal=recommendation.goal,
         )
 
+    def _elevate_for_goal(self, recommendation, goal_priority, goal_urgency):
+        if recommendation is None:
+            return None
+        priority = recommendation.priority
+        if goal_priority == "critical" or goal_urgency >= 0.95:
+            priority = "high"
+        elif priority == "low" and (goal_priority == "high" or goal_urgency >= 0.7):
+            priority = "normal"
+        if priority == recommendation.priority:
+            return recommendation
+        return PolicyRecommendation(recommendation.action, recommendation.reason, recommendation.notification, priority=priority, goal=recommendation.goal)
+
     def decide(self, event_type, payload):
         payload = payload or {}
         goal, confidence = self._task(payload)
+        goal_title, goal_urgency, goal_priority = self._goal_context(payload)
+        if not goal and goal_title:
+            goal = goal_title
         if not goal:
             return None
-        if confidence < self.weak_confidence:
+        if confidence < self.weak_confidence and not goal_title:
             return PolicyRecommendation("record", "weak_task_context", priority="low")
+        if confidence < self.weak_confidence and goal_title:
+            confidence = self.weak_confidence
 
         recommendation = None
         if event_type == "desktop.context.repeated":
@@ -87,6 +119,7 @@ class ProactiveReasoningPolicy:
             else:
                 recommendation = PolicyRecommendation("notify", "task_context_dwell",
                                                       f"Ты всё ещё работаешь над «{goal}».", priority="low", goal=goal)
+        recommendation = self._elevate_for_goal(recommendation, goal_priority, goal_urgency)
         return self._respect_feedback(recommendation) if recommendation is not None else None
 
 
