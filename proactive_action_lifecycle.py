@@ -65,7 +65,10 @@ class ProactiveActionLifecycle:
             for task_id, item in self._items.items():
                 if item.get("status") in TERMINAL_STATUSES: continue
                 task = tasks.get(task_id)
-                if task is None: continue
+                if task is None:
+                    if not tasks:
+                        item["status"] = "interrupted"; item["result"] = None; item["error"] = "Task disappeared before lifecycle reconciliation."; item["finished_at"] = self._clock(); changed.append(dict(item))
+                    continue
                 status = task.get("status")
                 if status == "completed":
                     item["status"] = "completed"; item["result"] = task.get("result"); item["finished_at"] = task.get("finished_at") or self._clock(); changed.append(dict(item))
@@ -74,7 +77,7 @@ class ProactiveActionLifecycle:
                 elif status == "cancelled":
                     item["status"] = "cancelled"; item["result"] = None; item["error"] = task.get("error") or "Cancelled by user"; item["finished_at"] = task.get("finished_at") or self._clock(); changed.append(dict(item))
                 elif status == "interrupted":
-                    item["status"] = "interrupted"; item["error"] = task.get("error") or "Akira was restarted before this action completed."; item["finished_at"] = task.get("finished_at") or self._clock(); changed.append(dict(item))
+                    item["status"] = "interrupted"; item["result"] = None; item["error"] = task.get("error") or "Akira was restarted before this action completed."; item["finished_at"] = task.get("finished_at") or self._clock(); changed.append(dict(item))
             if changed: self._save()
         return changed
 
