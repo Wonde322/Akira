@@ -11,14 +11,17 @@ import os
 import threading
 import time
 
+from proactive_interruption_control import get_proactive_interruption_control
+
 
 class ProactiveAttentionBudget:
     def __init__(self, path="runtime/proactive_attention_budget.json", max_points=6,
-                 refill_seconds=10 * 60, clock=None):
+                 refill_seconds=10 * 60, clock=None, interruption_control=None):
         self.path = path
         self.max_points = max(1.0, float(max_points))
         self.refill_seconds = max(1.0, float(refill_seconds))
         self._clock = clock or time.time
+        self._interruption_control = interruption_control or get_proactive_interruption_control()
         self._lock = threading.RLock()
         self._data = self._load()
 
@@ -61,6 +64,8 @@ class ProactiveAttentionBudget:
         return 0.0
 
     def allow(self, action, priority="normal"):
+        if not self._interruption_control.allow(action, priority):
+            return False
         now = float(self._clock())
         with self._lock:
             points = self._refill(now)
