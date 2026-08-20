@@ -29,7 +29,9 @@ class ProactiveDesktopBridge(QObject):
         return self._active_question_id
 
     def start(self):
-        self.poll()
+        discard = getattr(self._delivery, "discard_startup_notifications", None)
+        if callable(discard):
+            discard()
         self._timer.start()
 
     def stop(self):
