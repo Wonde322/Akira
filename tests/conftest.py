@@ -34,6 +34,39 @@ PROJECT_MODULES = {
 }
 
 
+@pytest.fixture(autouse=True)
+def reset_proactive_singletons():
+    """Keep persistent proactive state from leaking between independent tests.
+
+    Proactive interruption mode and attention budget intentionally persist in the
+    application, but a previous test must not be able to leave the shared default
+    singletons in quiet/focus mode or with an exhausted budget for the next test.
+    Individual tests can still verify persistence by constructing stores with an
+    explicit path or by exercising multiple operations within the same test.
+    """
+    try:
+        from proactive_interruption_control import get_proactive_interruption_control
+        get_proactive_interruption_control().reset()
+    except Exception:
+        pass
+    try:
+        from proactive_attention_budget import get_proactive_attention_budget
+        get_proactive_attention_budget().reset()
+    except Exception:
+        pass
+    yield
+    try:
+        from proactive_interruption_control import get_proactive_interruption_control
+        get_proactive_interruption_control().reset()
+    except Exception:
+        pass
+    try:
+        from proactive_attention_budget import get_proactive_attention_budget
+        get_proactive_attention_budget().reset()
+    except Exception:
+        pass
+
+
 @pytest.fixture
 def isolated_project(monkeypatch, tmp_path):
     """Import project modules in an isolated working directory.
