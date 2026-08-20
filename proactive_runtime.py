@@ -14,6 +14,7 @@ from proactive_policy import get_proactive_reasoning_policy
 from proactive_action_proposals import get_proactive_action_proposer
 
 MAX_CAUSATION_DEPTH = 3
+MAX_COMPLETION_RESULT_CHARS = 1200
 
 
 class ProactiveAction(str, Enum):
@@ -111,6 +112,16 @@ class ProactiveRuntime:
         return f"Не удалось завершить задачу «{str(payload.get('goal') or 'фоновой задачи').strip()}»: {str(payload.get('error') or 'неизвестная ошибка').strip()}"
 
     @staticmethod
+    def _message_for_completion(payload):
+        goal = str(payload.get("goal") or "задача").strip()
+        result = str(payload.get("result") or "").strip()
+        if not result:
+            return f"Задача завершена: {goal}"
+        if len(result) > MAX_COMPLETION_RESULT_CHARS:
+            result = result[:MAX_COMPLETION_RESULT_CHARS].rstrip() + "…"
+        return f"Готово: {goal}\n\n{result}"
+
+    @staticmethod
     def _is_proactive_session(payload): return str(payload.get("session_id") or "").startswith("proactive:")
 
     def _context_decision(self, payload):
@@ -154,7 +165,7 @@ class ProactiveRuntime:
             notify = bool(payload.get("notify")); proactive = self._is_proactive_session(payload)
             if notify or proactive:
                 goal = str(payload.get("goal") or "задача"); reason = "proactive_task_completed" if proactive and not notify else "background_task_completed"
-                return ProactiveDecision(ProactiveAction.NOTIFY, reason, notification=f"Задача завершена: {goal}")
+                return ProactiveDecision(ProactiveAction.NOTIFY, reason, notification=self._message_for_completion(payload))
         if event_type == "proactive.question":
             question = str(payload.get("question") or "").strip()
             return ProactiveDecision(ProactiveAction.ASK_USER, "explicit_question", notification=question, priority="high") if question else ProactiveDecision(ProactiveAction.IGNORE, "question_without_text")
