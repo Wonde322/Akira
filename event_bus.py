@@ -141,7 +141,11 @@ class EventBus:
                 spawn = result.get("spawn") or {}
                 if spawn.get("success"):
                     current["last_fired_at"] = _iso()
-                    current["fire_count"] = int(current.get("fire_count") or 0) + 1
+                    try:
+                        fire_count = int(current.get("fire_count") or 0)
+                    except (TypeError, ValueError):
+                        fire_count = 0
+                    current["fire_count"] = max(0, fire_count) + 1
                     current["last_task_id"] = spawn.get("task_id")
                     current["last_error"] = None
                 elif result.get("decision", {}).get("action") == "spawn_task":
