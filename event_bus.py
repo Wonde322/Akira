@@ -124,7 +124,9 @@ class EventBus:
   if cooldown<=0 or not last:return False
   try:timestamp=datetime.fromisoformat(last)
   except Exception:return False
-  return (_now()-timestamp).total_seconds()<cooldown
+  now=_now()
+  if timestamp.tzinfo is None:timestamp=timestamp.replace(tzinfo=now.tzinfo)
+  return (now-timestamp).total_seconds()<cooldown
  def _render_goal(self,goal,event):
   payload=event.get("payload",{});result=str(goal)
   for key,value in {"{{event.type}}":str(event.get("type","")),"{{event.id}}":str(event.get("id","")),"{{event.timestamp}}":str(event.get("timestamp","")),"{{event.payload}}":json.dumps(payload,ensure_ascii=False)}.items():result=result.replace(key,value)
