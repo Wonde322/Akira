@@ -16,37 +16,37 @@ class Budget:
         return self.allowed
 
 
-def event(number, priority="normal"):
+def event(number):
     return {"id": f"attention-{number}", "type": "proactive.question",
-            "payload": {"question": f"Question {number}", "priority": priority}}
+            "payload": {"question": f"Question {number}"}}
 
 
 def test_budget_starts_full(tmp_path):
-    budget = ProactiveAttentionBudget(str(tmp_path / "budget.json"), max_points=3)
+    budget = ProactiveAttentionBudget(str(tmp_path / "budget.json"), max_points=3, clock=Clock())
     assert budget.snapshot()["points"] == 3.0
 
 
 def test_normal_notification_consumes_one_point(tmp_path):
-    budget = ProactiveAttentionBudget(str(tmp_path / "budget.json"), max_points=3)
+    budget = ProactiveAttentionBudget(str(tmp_path / "budget.json"), max_points=3, clock=Clock())
     assert budget.allow("notify", "normal")
     assert budget.snapshot()["points"] == 2.0
 
 
 def test_question_costs_more_than_notification(tmp_path):
-    budget = ProactiveAttentionBudget(str(tmp_path / "budget.json"), max_points=3)
+    budget = ProactiveAttentionBudget(str(tmp_path / "budget.json"), max_points=3, clock=Clock())
     assert budget.allow("ask_user", "normal")
     assert budget.snapshot()["points"] == 1.0
 
 
 def test_low_priority_notification_has_smaller_cost(tmp_path):
-    budget = ProactiveAttentionBudget(str(tmp_path / "budget.json"), max_points=1)
+    budget = ProactiveAttentionBudget(str(tmp_path / "budget.json"), max_points=1, clock=Clock())
     assert budget.allow("notify", "low")
     assert budget.allow("notify", "low")
     assert not budget.allow("notify", "low")
 
 
 def test_budget_blocks_when_exhausted(tmp_path):
-    budget = ProactiveAttentionBudget(str(tmp_path / "budget.json"), max_points=1)
+    budget = ProactiveAttentionBudget(str(tmp_path / "budget.json"), max_points=1, clock=Clock())
     assert budget.allow("notify", "normal")
     assert not budget.allow("notify", "normal")
 
@@ -61,7 +61,7 @@ def test_budget_refills_with_time(tmp_path):
 
 
 def test_high_priority_bypasses_budget(tmp_path):
-    budget = ProactiveAttentionBudget(str(tmp_path / "budget.json"), max_points=1)
+    budget = ProactiveAttentionBudget(str(tmp_path / "budget.json"), max_points=1, clock=Clock())
     assert budget.allow("notify", "normal")
     assert budget.allow("ask_user", "high")
     assert budget.snapshot()["points"] == 0.0
@@ -69,14 +69,15 @@ def test_high_priority_bypasses_budget(tmp_path):
 
 def test_budget_survives_restart(tmp_path):
     path = str(tmp_path / "budget.json")
-    first = ProactiveAttentionBudget(path, max_points=2)
+    clock = Clock()
+    first = ProactiveAttentionBudget(path, max_points=2, clock=clock)
     first.allow("notify", "normal")
-    second = ProactiveAttentionBudget(path, max_points=2)
+    second = ProactiveAttentionBudget(path, max_points=2, clock=clock)
     assert second.snapshot()["points"] == 1.0
 
 
 def test_reset_restores_full_budget(tmp_path):
-    budget = ProactiveAttentionBudget(str(tmp_path / "budget.json"), max_points=2)
+    budget = ProactiveAttentionBudget(str(tmp_path / "budget.json"), max_points=2, clock=Clock())
     budget.allow("ask_user", "normal")
     assert budget.reset()["points"] == 2.0
 
