@@ -10,11 +10,11 @@ def get_activity_stats(days=1):
     for session in activity:
         try:
             app = session["app"]
-            duration = session["duration_seconds"]
-
+            duration = float(session["duration_seconds"])
+            if duration < 0:
+                continue
             totals[app] = totals.get(app, 0) + duration
-
-        except (KeyError, TypeError):
+        except (KeyError, TypeError, ValueError):
             continue
 
     if not totals:
