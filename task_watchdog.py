@@ -16,11 +16,11 @@ class TaskWatchdog:
         self._lock = threading.RLock()
         self._reported = set()
 
-    def _event_key(self, task, event_type):
-        return event_type, str(task.get("id") or "")
+    def _event_key(self, task, kind):
+        return kind, str(task.get("id") or "")
 
-    def _emit_event(self, event_type, task, extra=None):
-        key = self._event_key(task, event_type)
+    def _emit_failure(self, kind, task, error, extra=None):
+        key = self._event_key(task, kind)
         with self._lock:
             if key in self._reported:
                 return None
@@ -31,6 +31,8 @@ class TaskWatchdog:
             "goal": task.get("goal"),
             "session_id": task.get("session_id"),
             "status": task.get("status"),
+            "error": error,
+            "watchdog_kind": kind,
         }
         if extra:
             payload.update(extra)
@@ -39,7 +41,7 @@ class TaskWatchdog:
             if emitter is None:
                 from event_bus import emit_event
                 emitter = emit_event
-            return emitter(event_type, payload, source="task_watchdog")
+            return emitter("task.failed", payload, source="task_watchdog")
         except Exception:
             with self._lock:
                 self._reported.discard(key)
@@ -65,9 +67,8 @@ class TaskWatchdog:
                 continue
             status = task.get("status")
             if status == "interrupted":
-                event = self._emit_event("task.interrupted", task, {
-                    "error": task.get("error"),
-                })
+                error = str(task.get("error") or "Фоновая задача была прервана после перезапуска Akira.")
+                event = self._emit_failure("interrupted", task, error)
                 if event is not None:
                     interrupted.append(str(task["id"]))
                 continue
@@ -82,7 +83,8 @@ class TaskWatchdog:
                 continue
             if age < self.stall_seconds:
                 continue
-            event = self._emit_event("task.stalled", task, {
+            error = f"Фоновая задача не завершилась за {int(age)} секунд и считается зависшей."
+            event = self._emit_failure("stalled", task, error, {
                 "age_seconds": round(age, 3),
                 "stall_seconds": self.stall_seconds,
             })
