@@ -66,7 +66,9 @@ class ProactiveActionLifecycle:
                 if item.get("status") in TERMINAL_STATUSES: continue
                 task = tasks.get(task_id)
                 if task is None:
-                    item["status"] = "interrupted"; item["result"] = None; item["error"] = "Task disappeared before lifecycle reconciliation."; item["finished_at"] = self._clock(); changed.append(dict(item)); continue
+                    if not tasks:
+                        item["status"] = "interrupted"; item["result"] = None; item["error"] = "Task disappeared before lifecycle reconciliation."; item["finished_at"] = self._clock(); changed.append(dict(item))
+                    continue
                 status = task.get("status")
                 if status == "completed":
                     item["status"] = "completed"; item["result"] = task.get("result"); item["finished_at"] = task.get("finished_at") or self._clock(); changed.append(dict(item))
