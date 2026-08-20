@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from desktop_app.proactive_window import ProactiveMainWindow
 
 
@@ -25,15 +27,29 @@ class FakeVoice:
         self.resumed = True
 
 
+def _window(active="q1", dialogue=False):
+    """Small duck-typed receiver for testing logic without constructing QWidget."""
+    window = SimpleNamespace()
+    window.proactive_surface = FakeSurface(active=active)
+    window.voice = FakeVoice(dialogue=dialogue)
+    window.IDLE = "idle"
+    window.LISTENING = "listening"
+    window._append_message = lambda text, role: None
+    window._clear_status = lambda: None
+    window._set_state = lambda state: None
+    window._show_error = lambda text: None
+    return window
+
+
 def test_proactive_text_prefers_message():
-    window = object.__new__(ProactiveMainWindow)
-    assert window._proactive_text({"message": "hello", "title": "ignored"}) == "hello"
+    window = _window()
+    assert ProactiveMainWindow._proactive_text(
+        window, {"message": "hello", "title": "ignored"}
+    ) == "hello"
 
 
 def test_submit_proactive_answer_does_not_use_brain_worker():
-    window = object.__new__(ProactiveMainWindow)
-    window.proactive_surface = FakeSurface()
-    window.voice = FakeVoice(dialogue=False)
+    window = _window()
     messages = []
     states = []
     cleared = []
@@ -41,7 +57,7 @@ def test_submit_proactive_answer_does_not_use_brain_worker():
     window._clear_status = lambda: cleared.append(True)
     window._set_state = lambda state: states.append(state)
 
-    handled = window._submit_proactive_answer("yes")
+    handled = ProactiveMainWindow._submit_proactive_answer(window, "yes")
 
     assert handled is True
     assert messages == [("yes", "user")]
@@ -51,6 +67,5 @@ def test_submit_proactive_answer_does_not_use_brain_worker():
 
 
 def test_submit_returns_false_without_active_question():
-    window = object.__new__(ProactiveMainWindow)
-    window.proactive_surface = FakeSurface(active=None)
-    assert window._submit_proactive_answer("normal message") is False
+    window = _window(active=None)
+    assert ProactiveMainWindow._submit_proactive_answer(window, "normal message") is False
