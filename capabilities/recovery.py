@@ -12,10 +12,9 @@ Flow:
       -> fresh observation
       -> different action
 
-The important invariant is that a generic execution error must not erase
-knowledge about the route that actually failed. A failed filesystem action,
-for example, should still suggest filesystem evidence and shell fallback,
-rather than being reduced to GUI-only recovery.
+Fallback recommendations must themselves be available capabilities. Recovery
+is useless if it tells the agent to call a tool that does not exist in the
+active universal computer surface.
 """
 
 from __future__ import annotations
@@ -36,13 +35,18 @@ ERROR_FALLBACKS = {
         "open",
         "key",
     ),
+    # Screen dimensions are already part of observation metadata. Do not
+    # recommend a fictional screen_size capability: refresh the actual state
+    # and let the action-specific fallback choose a valid route.
     "out_of_bounds": (
         "observe",
-        "screen_size",
+        "key",
+        "open",
     ),
     "invalid_coordinate": (
         "observe",
-        "screen_size",
+        "key",
+        "open",
     ),
     "backend_unavailable": (
         "observe",
