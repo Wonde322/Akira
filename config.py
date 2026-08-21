@@ -68,18 +68,9 @@ NO_PROGRESS_LIMIT = 3
 MAX_OBSERVATION_HISTORY = 8
 
 # Инструменты, включающие computer-use режим.
-#
-# Здесь есть две группы:
-# - universal computer actions, которые меняют/наблюдают состояние;
-# - orchestration actions, без которых многошаговый агентный цикл не может
-#   реально поддерживать план, перестраивать маршрут или расширять доступные
-#   capabilities.
-#
-# Раньше SYSTEM_PROMPT требовал plan_task/update_task_plan/
-# complete_plan_step/fail_plan_step/discover_capability, но активный
-# computer-use loop вообще не показывал их модели. В результате Акира могла
-# физически кликать и наблюдать экран, но не могла использовать собственный
-# механизм планирования и discovery во время активной задачи.
+# Активная задача получает универсальную поверхность, достаточную не только для
+# GUI-кликов, но и для реальной работы с файлами и терминалом. Ограничения доступа
+# по-прежнему проверяются PermissionManager на каждом фактическом вызове.
 COMPUTER_USE_TOOLS = (
     # Universal computer actions.
     "open",
@@ -92,6 +83,17 @@ COMPUTER_USE_TOOLS = (
     "key",
     "observe",
     "wait",
+
+    # Universal filesystem and shell actions.
+    "find",
+    "read",
+    "write",
+    "create",
+    "move",
+    "copy",
+    "rename",
+    "delete",
+    "shell",
 
     # Agent orchestration.
     "plan_task",
