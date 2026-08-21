@@ -29,7 +29,37 @@ class BrainWorker(QThread):
         self._queue = queue.Queue()
         self._stop = False
 
+    def _prepare_start(self):
+        """Reset stop state and discard only stale shutdown sentinels.
+
+        ``request_stop()`` is allowed before the thread has started.  A later
+        start must therefore not inherit either the stop flag or the queued
+        ``None`` sentinel, while ordinary messages queued before start must
+        remain intact.
+        """
+        pending = []
+        while True:
+            try:
+                message = self._queue.get_nowait()
+            except queue.Empty:
+                break
+            if message is not None:
+                pending.append(message)
+
+        self._queue = queue.Queue()
+        for message in pending:
+            self._queue.put(message)
+        self._stop = False
+
+    def start(self, priority=QThread.Priority.InheritPriority):
+        if self.isRunning():
+            return
+        self._prepare_start()
+        super().start(priority)
+
     def submit(self, message):
+        if message is None:
+            return
         self._queue.put(message)
 
     def request_stop(self):
