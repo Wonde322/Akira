@@ -37,16 +37,45 @@ _current_execution: ContextVar[Optional[ExecutionContext]] = ContextVar(
     "akira_execution_context", default=None
 )
 
+_guard_lock = RLock()
+
+
+def _install_cancellation_guards(agent_loop):
+    """Install cooperative cancellation at the real loop's action boundaries.
+
+    The guards live on the existing loop functions rather than duplicating the
+    loop in AgentRuntime. ContextVar keeps the check execution-local even when
+    foreground and background runs share the same imported module.
+    """
+    with _guard_lock:
+        if not getattr(agent_loop, "_akira_cancellation_guards", False):
+            original_tools_for_reasoning = agent_loop._tools_for_reasoning
+            original_execute_and_audit = agent_loop._execute_and_audit
+
+            def guarded_tools_for_reasoning(*args, **kwargs):
+                raise_if_execution_cancelled()
+                return original_tools_for_reasoning(*args, **kwargs)
+
+            def guarded_execute_and_audit(*args, **kwargs):
+                raise_if_execution_cancelled()
+                return original_execute_and_audit(*args, **kwargs)
+
+            agent_loop._tools_for_reasoning = guarded_tools_for_reasoning
+            agent_loop._execute_and_audit = guarded_execute_and_audit
+            agent_loop._akira_cancellation_guards = True
+
 
 def _run_agent_turn(goal, session_id=None):
     """Execute the real reasoning loop owned by ``agent_loop``.
 
-    The checks remain at the runtime boundary until cancellation checks are
-    threaded through every reasoning/action iteration.
+    Cancellation is checked at the start of every reasoning iteration and
+    immediately before every tool execution, in addition to the execution
+    boundary checks here.
     """
     raise_if_execution_cancelled()
-    from agent_loop import ask
-    result = ask(goal, session_id=session_id)
+    import agent_loop
+    _install_cancellation_guards(agent_loop)
+    result = agent_loop.ask(goal, session_id=session_id)
     raise_if_execution_cancelled()
     return result
 
