@@ -105,8 +105,11 @@ COMPUTER_USE_TOOLS = (
     "discover_capability",
 )
 
-# Только действия, реально меняющие внешнее состояние. Они требуют свежего
-# observe перед финальной verification.
+# Действия, меняющие внешнее состояние задачи. После них старая verification
+# недействительна: перед завершением нужен свежий observe и новый verify_goal.
+# Сюда входят не только GUI-действия, но и универсальные filesystem/shell routes:
+# иначе агент мог бы записать файл или выполнить команду и проверить цель по
+# наблюдению, сделанному ещё до изменения состояния.
 STATE_CHANGING_TOOLS = (
     "open",
     "close",
@@ -116,6 +119,13 @@ STATE_CHANGING_TOOLS = (
     "scroll",
     "drag",
     "key",
+    "write",
+    "create",
+    "move",
+    "copy",
+    "rename",
+    "delete",
+    "shell",
 )
 
 _client = None
@@ -140,6 +150,7 @@ def create_groq_client():
                 from groq import Groq
 
                 api_key = _get_groq_api_key()
+
                 if not api_key:
                     raise KeyError(GROQ_API_KEY_ENV)
 
@@ -152,7 +163,5 @@ BACKGROUND_TASK_MAX_CONCURRENT = 3
 BACKGROUND_TASK_MAX_STORED = 100
 BACKGROUND_TASK_DIR = PROJECT_ROOT / "runtime" / "tasks"
 BACKGROUND_TASK_FILE = (
-    PROJECT_ROOT
-    / "runtime"
-    / "background_tasks.json"
+    PROJECT_ROOT / "runtime" / "background_tasks.json"
 )
