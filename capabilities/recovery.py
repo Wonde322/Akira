@@ -1,17 +1,21 @@
 """Adaptive recovery policy for Akira computer-use tasks.
 
-Recovery does not execute actions.
-It classifies failures and produces alternative universal capabilities
-for the reasoning/router layer.
+Recovery does not execute actions. It classifies failures and produces
+alternative universal capabilities for the reasoning/router layer.
 
 Flow:
 
     action
       -> result
       -> classify failure
-      -> fallback capabilities
+      -> merge generic + action-specific fallbacks
       -> fresh observation
       -> different action
+
+The important invariant is that a generic execution error must not erase
+knowledge about the route that actually failed. A failed filesystem action,
+for example, should still suggest filesystem evidence and shell fallback,
+rather than being reduced to GUI-only recovery.
 """
 
 from __future__ import annotations
@@ -155,6 +159,25 @@ ACTION_FALLBACKS = {
 }
 
 
+def _merged_fallbacks(action, error):
+    """Return generic and action-specific recovery routes in stable order.
+
+    Generic error handling explains the failure class; action handling keeps
+    the modality-specific alternatives. Both are needed for useful recovery.
+    """
+    merged = []
+
+    for candidates in (
+        ERROR_FALLBACKS.get(error, ()),
+        ACTION_FALLBACKS.get(action, ()),
+    ):
+        for tool in candidates:
+            if tool and tool not in merged and tool != action:
+                merged.append(tool)
+
+    return merged or ["observe"]
+
+
 def classify_failure(action, result):
     """Classify a failed tool result and produce fallback capabilities."""
 
@@ -175,26 +198,7 @@ def classify_failure(action, result):
 
     error = str(result.get("error") or "").strip()
     output = str(result.get("output") or "").strip()
-
-    fallback = list(
-        ERROR_FALLBACKS.get(
-            error,
-            ACTION_FALLBACKS.get(
-                action,
-                ("observe",),
-            ),
-        )
-    )
-
-    # Никогда не предлагаем тупо повторить тот же failed action.
-    fallback = [
-        tool
-        for tool in fallback
-        if tool != action
-    ]
-
-    if not fallback:
-        fallback = ["observe"]
+    fallback = _merged_fallbacks(action, error)
 
     if error in {
         "out_of_bounds",
