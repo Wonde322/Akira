@@ -1,6 +1,7 @@
-"""Worker thread: выполняет brain.ask в отдельном потоке и сообщает прогресс."""
+"""Worker thread: executes brain.ask in a separate thread and supports cooperative cancellation."""
 
 import queue
+import threading
 import traceback
 
 from PySide6.QtCore import QThread, Signal
@@ -8,14 +9,17 @@ from PySide6.QtCore import QThread, Signal
 from .activity import activity_label
 
 
-class BrainWorker(QThread):
-    """Очередь запросов + поток, который их обрабатывает.
+class AgentCancelled(Exception):
+    """Raised at a safe execution boundary after the user interrupts a task."""
 
-    Сигналы:
-        answer_ready(str)  — итоговый ответ Акиры;
-        error(str)         — дружелюбное сообщение об ошибке;
-        activity(str)      — короткая подпись текущего действия;
-        busy(bool)         — True на время обработки запроса.
+
+class BrainWorker(QThread):
+    """Queue-backed brain worker with interruptible active execution.
+
+    Cancellation is cooperative: the current tool call is allowed to return,
+    then the audit boundary raises AgentCancelled before another agent step can
+    continue. This prevents the loop from starting a new action after the user
+    has interrupted it.
     """
 
     answer_ready = Signal(str)
@@ -28,15 +32,13 @@ class BrainWorker(QThread):
         self.session_id = session_id
         self._queue = queue.Queue()
         self._stop = False
+        self._cancel_event = threading.Event()
+        self._active = False
+        self._interrupt_preserves_task = False
+        self._suppress_interrupt_notice = False
+        self._state_lock = threading.Lock()
 
     def _prepare_start(self):
-        """Reset stop state and discard only stale shutdown sentinels.
-
-        ``request_stop()`` is allowed before the thread has started.  A later
-        start must therefore not inherit either the stop flag or the queued
-        ``None`` sentinel, while ordinary messages queued before start must
-        remain intact.
-        """
         pending = []
         while True:
             try:
@@ -50,6 +52,9 @@ class BrainWorker(QThread):
         for message in pending:
             self._queue.put(message)
         self._stop = False
+        self._cancel_event.clear()
+        with self._state_lock:
+            self._active = False
 
     def start(self, priority=QThread.Priority.InheritPriority):
         if self.isRunning():
@@ -60,11 +65,39 @@ class BrainWorker(QThread):
     def submit(self, message):
         if message is None:
             return
+
+        # A new user request always takes priority over a running agent turn.
+        # "Продолжай" keeps the current plan; any other request starts from a
+        # clean task state after the current safe boundary is reached.
+        text = str(message).strip().lower()
+        resume = text in {"продолжай", "продолжи", "продолжить", "resume", "continue"}
+        with self._state_lock:
+            active = self._active
+        if active:
+            self._interrupt_preserves_task = resume
+            self._suppress_interrupt_notice = True
+            self._cancel_event.set()
         self._queue.put(message)
 
     def request_stop(self):
         self._stop = True
+        self._cancel_event.set()
         self._queue.put(None)
+
+    def cancel_current(self):
+        """Interrupt the current agent turn at the next safe audit boundary.
+
+        Returns False when nothing is currently executing, so callers can keep
+        ordinary chat input independent from the interrupt control.
+        """
+        with self._state_lock:
+            active = self._active
+        if not active:
+            return False
+        self._interrupt_preserves_task = False
+        self._suppress_interrupt_notice = False
+        self._cancel_event.set()
+        return True
 
     def run(self):
         import audit
@@ -79,20 +112,37 @@ class BrainWorker(QThread):
                 if message is None:
                     break
 
+                self._cancel_event.clear()
+                self._interrupt_preserves_task = False
+                self._suppress_interrupt_notice = False
+                with self._state_lock:
+                    self._active = True
                 self.busy.emit(True)
 
                 try:
                     answer = ask(message, session_id=self.session_id)
+                    if self._cancel_event.is_set():
+                        raise AgentCancelled()
                     self.answer_ready.emit(answer or "")
+                except AgentCancelled:
+                    if not self._interrupt_preserves_task:
+                        from brain import get_session
+                        get_session(self.session_id).end_task()
+                    if not self._suppress_interrupt_notice:
+                        self.answer_ready.emit("Остановил текущую задачу.")
                 except Exception as error:
                     traceback.print_exc()
                     self.error.emit(_friendly_error(error))
-
-                self.busy.emit(False)
+                finally:
+                    with self._state_lock:
+                        self._active = False
+                    self.busy.emit(False)
         finally:
             audit.clear_activity_hook()
 
     def _on_activity(self, tool_name, arguments):
+        if self._cancel_event.is_set():
+            raise AgentCancelled()
         self.activity.emit(activity_label(tool_name))
 
 
@@ -102,7 +152,7 @@ def _friendly_error(error):
     if "GROQ_API_KEY" in text or "api_key" in text.lower():
         return "Не найден GROQ_API_KEY. Проверь настройки API."
 
-    if "denied" in str(error).lower():
+    if "denied" in text.lower():
         return "Действие не разрешено."
 
     return "Не удалось выполнить действие. Попробуй ещё раз."
