@@ -67,8 +67,21 @@ MAX_ACTIONS_WITHOUT_OBSERVE = 8
 NO_PROGRESS_LIMIT = 3
 MAX_OBSERVATION_HISTORY = 8
 
-# Инструменты, включающие computer-use режим, и state-changing (требуют observe).
+# Инструменты, включающие computer-use режим.
+#
+# Здесь есть две группы:
+# - universal computer actions, которые меняют/наблюдают состояние;
+# - orchestration actions, без которых многошаговый агентный цикл не может
+#   реально поддерживать план, перестраивать маршрут или расширять доступные
+#   capabilities.
+#
+# Раньше SYSTEM_PROMPT требовал plan_task/update_task_plan/
+# complete_plan_step/fail_plan_step/discover_capability, но активный
+# computer-use loop вообще не показывал их модели. В результате Акира могла
+# физически кликать и наблюдать экран, но не могла использовать собственный
+# механизм планирования и discovery во время активной задачи.
 COMPUTER_USE_TOOLS = (
+    # Universal computer actions.
     "open",
     "close",
     "click",
@@ -79,9 +92,19 @@ COMPUTER_USE_TOOLS = (
     "key",
     "observe",
     "wait",
+
+    # Agent orchestration.
+    "plan_task",
+    "update_task_plan",
+    "complete_plan_step",
+    "fail_plan_step",
     "verify_goal",
     "finish_task",
+    "discover_capability",
 )
+
+# Только действия, реально меняющие внешнее состояние. Они требуют свежего
+# observe перед финальной verification.
 STATE_CHANGING_TOOLS = (
     "open",
     "close",
@@ -105,9 +128,7 @@ def _get_groq_api_key():
 def create_groq_client():
     """Возвращает единый лениво созданный Groq-клиент.
 
-    Клиент создаётся один раз на процесс при первом обращении. Импорт
-    модулей, которые используют этот клиент, не падает без GROQ_API_KEY:
-    исключение возникнет только при фактическом LLM-запросе.
+    Клиент создаётся один раз на процесс при первом обращении.
     """
     global _client
 
