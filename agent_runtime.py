@@ -1,51 +1,37 @@
 """Single execution boundary and lifecycle control for Akira agent runs.
 
 UI, voice, foreground tasks and background tasks enter the agent through this
-module. Task ownership, execution identity and cooperative cancellation live
-here; the reasoning-loop implementation is owned by ``agent_loop``.
+module. Task ownership and lifecycle live here; execution-local identity and
+cooperative cancellation are provided by ``execution_context`` so the reasoning
+loop can eventually depend on the same primitive without importing this runtime.
 """
 from __future__ import annotations
 
-from contextvars import ContextVar
 from dataclasses import dataclass
 from threading import Event, RLock
 from typing import Callable, Optional
 
-
-class ExecutionCancelled(RuntimeError):
-    """Raised when an agent loop observes cooperative cancellation."""
-
-
-@dataclass
-class ExecutionContext:
-    goal: str
-    session_id: Optional[str]
-    mode: str
-    task_id: Optional[str] = None
-    _cancel_event: Event | None = None
-
-    @property
-    def cancelled(self) -> bool:
-        return bool(self._cancel_event and self._cancel_event.is_set())
-
-    def raise_if_cancelled(self):
-        if self.cancelled:
-            raise ExecutionCancelled("Agent execution was cancelled")
-
-
-_current_execution: ContextVar[Optional[ExecutionContext]] = ContextVar(
-    "akira_execution_context", default=None
+from execution_context import (
+    ExecutionCancelled,
+    ExecutionContext,
+    activate_execution,
+    current_execution,
+    deactivate_execution,
+    execution_cancelled,
+    raise_if_execution_cancelled,
 )
+
 
 _guard_lock = RLock()
 
 
 def _install_cancellation_guards(agent_loop):
-    """Install cooperative cancellation at the real loop's action boundaries.
+    """Install cooperative cancellation at the current loop boundaries.
 
-    The guards live on the existing loop functions rather than duplicating the
-    loop in AgentRuntime. ContextVar keeps the check execution-local even when
-    foreground and background runs share the same imported module.
+    This compatibility bridge remains temporary while ``agent_loop`` is being
+    migrated to call the execution-context primitive directly. Context state is
+    no longer owned by AgentRuntime, so the loop can adopt the same primitive
+    without a runtime import or a circular dependency.
     """
     with _guard_lock:
         if not getattr(agent_loop, "_akira_cancellation_guards", False):
@@ -66,12 +52,7 @@ def _install_cancellation_guards(agent_loop):
 
 
 def _run_agent_turn(goal, session_id=None):
-    """Execute the real reasoning loop owned by ``agent_loop``.
-
-    Cancellation is checked at the start of every reasoning iteration and
-    immediately before every tool execution, in addition to the execution
-    boundary checks here.
-    """
+    """Execute the real reasoning loop owned by ``agent_loop``."""
     raise_if_execution_cancelled()
     import agent_loop
     _install_cancellation_guards(agent_loop)
@@ -115,14 +96,14 @@ class AgentRuntime:
             with self._lock:
                 self._active[task_key] = cancel_event
 
-        token = _current_execution.set(context)
+        token = activate_execution(context)
         try:
             context.raise_if_cancelled()
             result = self._resolve_executor()(goal, session_id=session_id)
             context.raise_if_cancelled()
             return result
         finally:
-            _current_execution.reset(token)
+            deactivate_execution(token)
             if task_key:
                 with self._lock:
                     self._active.pop(task_key, None)
@@ -141,21 +122,6 @@ class AgentRuntime:
     def is_active(self, task_id):
         with self._lock:
             return str(task_id or "") in self._active
-
-
-def current_execution():
-    return _current_execution.get()
-
-
-def execution_cancelled():
-    context = current_execution()
-    return bool(context and context.cancelled)
-
-
-def raise_if_execution_cancelled():
-    context = current_execution()
-    if context is not None:
-        context.raise_if_cancelled()
 
 
 _default_runtime = AgentRuntime()
