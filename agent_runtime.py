@@ -2,7 +2,7 @@
 
 UI, voice, foreground tasks and background tasks enter the agent through this
 module. Task ownership, execution identity and cooperative cancellation live
-here; the reasoning-loop entry point is provided by ``agent_loop``.
+here; the reasoning-loop implementation is owned by ``agent_loop``.
 """
 from __future__ import annotations
 
@@ -38,13 +38,21 @@ _current_execution: ContextVar[Optional[ExecutionContext]] = ContextVar(
 )
 
 
-class AgentRuntime:
-    """Owns one agent execution and its cooperative lifecycle controls.
+def _run_agent_turn(goal, session_id=None):
+    """Execute the real reasoning loop owned by ``agent_loop``.
 
-    Callers depend on this runtime contract rather than importing conversation
-    or reasoning modules directly. Active task ids are tracked here, making
-    cancellation an execution concern instead of a ThreadPool concern.
+    The checks remain at the runtime boundary until cancellation checks are
+    threaded through every reasoning/action iteration.
     """
+    raise_if_execution_cancelled()
+    from agent_loop import ask
+    result = ask(goal, session_id=session_id)
+    raise_if_execution_cancelled()
+    return result
+
+
+class AgentRuntime:
+    """Owns one agent execution and its cooperative lifecycle controls."""
 
     def __init__(self, executor: Optional[Callable[..., str]] = None):
         self._executor = executor
@@ -56,8 +64,7 @@ class AgentRuntime:
 
     def _resolve_executor(self):
         if self._executor is None:
-            from agent_loop import run_agent_turn
-            self._executor = run_agent_turn
+            self._executor = _run_agent_turn
         return self._executor
 
     def run(self, goal, session_id=None, *, mode="foreground", task_id=None):
