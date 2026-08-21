@@ -103,6 +103,14 @@ COMPUTER_USE_TOOLS = (
     "verify_goal",
     "finish_task",
     "discover_capability",
+
+    # Long-running autonomous work. These capabilities already exist in the
+    # runtime and system prompt, but must also be present in the active agent
+    # surface so a computer-use task can hand work off without blocking the
+    # foreground loop.
+    "background_task_start",
+    "background_task_status",
+    "background_task_result",
 )
 
 # Действия, меняющие внешнее состояние задачи. После них старая verification
