@@ -9,166 +9,63 @@ Flow:
       -> result
       -> classify failure
       -> merge generic + action-specific fallbacks
-      -> fresh observation
-      -> different action
+      -> fresh observation when the external state may be stale
+      -> different action or corrected retry
 
-Fallback recommendations must themselves be available capabilities. Recovery
-is useless if it tells the agent to call a tool that does not exist in the
-active universal computer surface.
+The important invariant is that a generic execution error must not erase
+knowledge about the route that actually failed. A failed filesystem action,
+for example, should still suggest filesystem evidence and shell fallback,
+rather than being reduced to GUI-only recovery.
 """
 
 from __future__ import annotations
 
 
 ERROR_FALLBACKS = {
-    "target_required": (
-        "observe",
-        "open",
-    ),
-    "target_not_frontmost": (
-        "observe",
-        "open",
-        "key",
-    ),
-    "activate_failed": (
-        "observe",
-        "open",
-        "key",
-    ),
-    # Screen dimensions are already part of observation metadata. Do not
-    # recommend a fictional screen_size capability: refresh the actual state
-    # and let the action-specific fallback choose a valid route.
-    "out_of_bounds": (
-        "observe",
-        "key",
-        "open",
-    ),
-    "invalid_coordinate": (
-        "observe",
-        "key",
-        "open",
-    ),
-    "backend_unavailable": (
-        "observe",
-        "shell",
-    ),
-    "execution_error": (
-        "observe",
-        "key",
-        "open",
-        "shell",
-    ),
-    "error": (
-        "observe",
-        "key",
-        "open",
-        "shell",
-    ),
-    "permission": (
-        "observe",
-    ),
-    "denied": (
-        "observe",
-    ),
+    "target_required": ("observe", "open"),
+    "target_not_frontmost": ("observe", "open", "key"),
+    "activate_failed": ("observe", "open", "key"),
+    "out_of_bounds": ("observe", "key", "open"),
+    "invalid_coordinate": ("observe", "key", "open"),
+    "invalid_arguments": (),
+    "backend_unavailable": ("observe", "shell"),
+    "execution_error": ("observe", "key", "open", "shell"),
+    "error": ("observe", "key", "open", "shell"),
+    "permission": ("observe",),
+    "denied": ("observe",),
 }
 
 
 ACTION_FALLBACKS = {
-    "click": (
-        "observe",
-        "select",
-        "key",
-        "open",
-    ),
-    "select": (
-        "observe",
-        "click",
-        "key",
-        "open",
-    ),
-    "type": (
-        "observe",
-        "open",
-        "key",
-    ),
-    "key": (
-        "observe",
-        "click",
-        "type",
-        "open",
-    ),
-    "scroll": (
-        "observe",
-        "click",
-        "key",
-    ),
-    "drag": (
-        "observe",
-        "click",
-        "select",
-        "key",
-    ),
-    "open": (
-        "observe",
-        "key",
-        "shell",
-    ),
-    "close": (
-        "observe",
-        "key",
-        "shell",
-    ),
-    "shell": (
-        "observe",
-        "find",
-        "read",
-        "open",
-    ),
-    "write": (
-        "read",
-        "find",
-        "shell",
-        "observe",
-    ),
-    "create": (
-        "find",
-        "read",
-        "shell",
-        "observe",
-    ),
-    "move": (
-        "find",
-        "read",
-        "shell",
-        "observe",
-    ),
-    "copy": (
-        "find",
-        "read",
-        "shell",
-        "observe",
-    ),
-    "rename": (
-        "find",
-        "read",
-        "shell",
-        "observe",
-    ),
-    "delete": (
-        "find",
-        "read",
-        "shell",
-        "observe",
-    ),
+    "click": ("observe", "select", "key", "open"),
+    "select": ("observe", "click", "key", "open"),
+    "type": ("observe", "open", "key"),
+    "key": ("observe", "click", "type", "open"),
+    "scroll": ("observe", "click", "key"),
+    "drag": ("observe", "click", "select", "key"),
+    "open": ("observe", "key", "shell"),
+    "close": ("observe", "key", "shell"),
+    "shell": ("observe", "find", "read", "open"),
+    "write": ("read", "find", "shell", "observe"),
+    "create": ("find", "read", "shell", "observe"),
+    "move": ("find", "read", "shell", "observe"),
+    "copy": ("find", "read", "shell", "observe"),
+    "rename": ("find", "read", "shell", "observe"),
+    "delete": ("find", "read", "shell", "observe"),
+}
+
+
+# These failures mean the route itself has not failed. The model supplied bad
+# arguments or omitted information required by the same tool, so a corrected
+# retry is more useful than permanently banning that capability for recovery.
+CORRECTABLE_ERRORS = {
+    "invalid_arguments",
+    "target_required",
 }
 
 
 def _merged_fallbacks(action, error):
-    """Return generic and action-specific recovery routes in stable order.
-
-    Generic error handling explains the failure class; action handling keeps
-    the modality-specific alternatives. Both are needed for useful recovery.
-    """
+    """Return generic and action-specific recovery routes in stable order."""
     merged = []
 
     for candidates in (
@@ -183,8 +80,7 @@ def _merged_fallbacks(action, error):
 
 
 def classify_failure(action, result):
-    """Classify a failed tool result and produce fallback capabilities."""
-
+    """Classify a failed tool result and produce recovery guidance."""
     action = str(action or "").strip()
     result = result if isinstance(result, dict) else {}
 
@@ -202,12 +98,27 @@ def classify_failure(action, result):
 
     error = str(result.get("error") or "").strip()
     output = str(result.get("output") or "").strip()
+
+    if error in CORRECTABLE_ERRORS:
+        return {
+            "failed": True,
+            "action": action,
+            "error": error,
+            "reason": (
+                "The capability was not proven unusable. Correct the arguments "
+                "or provide the missing target, then retry the same action if "
+                "appropriate."
+            ),
+            "output": output[:1200],
+            "fallback_tools": _merged_fallbacks(action, error),
+            "avoid_same_action": False,
+            "force_observe": error == "target_required",
+        }
+
     fallback = _merged_fallbacks(action, error)
 
     if error in {
-        "out_of_bounds",
-        "invalid_coordinate",
-        "target_not_frontmost",
+        "out_of_bounds", "invalid_coordinate", "target_not_frontmost",
         "activate_failed",
     }:
         reason = (
@@ -215,28 +126,18 @@ def classify_failure(action, result):
             "Refresh observation before choosing another action."
         )
         force_observe = True
-
-    elif error in {
-        "backend_unavailable",
-        "execution_error",
-        "error",
-    }:
+    elif error in {"backend_unavailable", "execution_error", "error"}:
         reason = (
             "The current execution route failed. "
             "Choose another universal capability instead of repeating it."
         )
         force_observe = True
-
-    elif error in {
-        "denied",
-        "permission",
-    }:
+    elif error in {"denied", "permission"}:
         reason = (
             "The action is governed by permissions. "
             "Do not blindly retry the same action."
         )
         force_observe = True
-
     else:
         reason = (
             "The requested route failed. "
@@ -258,28 +159,14 @@ def classify_failure(action, result):
 
 def recovery_tools(action, result):
     """Return fallback capability names."""
-
-    return classify_failure(
-        action,
-        result,
-    )["fallback_tools"]
+    return classify_failure(action, result)["fallback_tools"]
 
 
 def should_force_observe(action, result):
     """Return whether a failed action requires fresh observation."""
-
-    return bool(
-        classify_failure(
-            action,
-            result,
-        ).get("force_observe")
-    )
+    return bool(classify_failure(action, result).get("force_observe"))
 
 
 def recovery_context(action, result):
     """Return complete structured recovery context."""
-
-    return classify_failure(
-        action,
-        result,
-    )
+    return classify_failure(action, result)
