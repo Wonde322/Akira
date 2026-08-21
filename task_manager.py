@@ -9,7 +9,7 @@ from typing import Optional
 from uuid import uuid4
 
 from config import BACKGROUND_TASK_MAX_CONCURRENT, BACKGROUND_TASK_MAX_STORED
-from agent_runtime import get_agent_runtime
+from agent_runtime import ExecutionCancelled, get_agent_runtime
 
 
 TERMINAL = {"completed", "failed", "cancelled"}
@@ -53,8 +53,9 @@ class ManagedTask:
 class TaskManager:
     """Owns task identity, lifecycle and execution mode.
 
-    Agent reasoning itself belongs to AgentRuntime.  This manager deliberately
-    does not know about LLMs, sessions internals, tools or UI.
+    Agent reasoning belongs to AgentRuntime. This manager does not know about
+    LLMs, tools or UI. Cancellation is requested through AgentRuntime and is
+    observed cooperatively by the execution loop at safe boundaries.
     """
 
     def __init__(self, max_workers=BACKGROUND_TASK_MAX_CONCURRENT):
@@ -69,10 +70,7 @@ class TaskManager:
     def _trim_locked(self):
         if len(self._tasks) <= self._max_stored:
             return
-        finished = [
-            task for task in self._tasks.values()
-            if task.status in TERMINAL
-        ]
+        finished = [task for task in self._tasks.values() if task.status in TERMINAL]
         finished.sort(key=lambda task: task.finished_at or "")
         for task in finished:
             if len(self._tasks) <= self._max_stored:
@@ -103,7 +101,7 @@ class TaskManager:
         with self._lock:
             active = sum(
                 1 for task in self._tasks.values()
-                if task.mode == "background" and task.status in {"queued", "running"}
+                if task.mode == "background" and task.status in {"queued", "running", "cancelling"}
             )
             if active >= BACKGROUND_TASK_MAX_CONCURRENT:
                 return {
@@ -133,9 +131,7 @@ class TaskManager:
     def _run(self, task_id):
         with self._lock:
             task = self._tasks.get(task_id)
-            if task is None:
-                return None
-            if task.status == "cancelled":
+            if task is None or task.status == "cancelled":
                 return None
             task.status = "running"
             task.started_at = task.started_at or _now()
@@ -150,10 +146,18 @@ class TaskManager:
                 mode=mode,
                 task_id=task_id,
             )
+        except ExecutionCancelled:
+            with self._lock:
+                task = self._tasks.get(task_id)
+                if task is not None:
+                    task.status = "cancelled"
+                    task.error = None
+                    task.finished_at = _now()
+            return None
         except Exception as exc:
             with self._lock:
                 task = self._tasks.get(task_id)
-                if task is not None and task.status != "cancelled":
+                if task is not None and task.status not in TERMINAL:
                     task.status = "failed"
                     task.error = repr(exc)
                     task.finished_at = _now()
@@ -161,15 +165,21 @@ class TaskManager:
 
         with self._lock:
             task = self._tasks.get(task_id)
-            if task is not None and task.status != "cancelled":
-                task.status = "completed"
-                task.result = str(result or "")
-                task.finished_at = _now()
+            if task is not None:
+                if task.status == "cancelling":
+                    task.status = "cancelled"
+                    task.finished_at = _now()
+                    return None
+                if task.status != "cancelled":
+                    task.status = "completed"
+                    task.result = str(result or "")
+                    task.finished_at = _now()
         return result
 
     def cancel(self, task_id):
+        task_key = str(task_id or "")
         with self._lock:
-            task = self._tasks.get(str(task_id or ""))
+            task = self._tasks.get(task_key)
             if task is None:
                 return {"success": False, "error": "background_task_not_found"}
             if task.status in TERMINAL:
@@ -179,12 +189,23 @@ class TaskManager:
                 task.status = "cancelled"
                 task.finished_at = _now()
                 return {"success": True, "data": task.snapshot(False)}
+            task.status = "cancelling"
+
+        requested = get_agent_runtime().cancel(task_key)
+        if requested:
             return {
-                "success": False,
-                "error": "task_already_running",
-                "status": task.status,
-                "output": "Уже выполняемая задача будет отменяться на границе agent step.",
+                "success": True,
+                "data": {"task_id": task_key, "status": "cancelling"},
+                "output": "Отмена запрошена. Текущий шаг завершится, следующий не начнётся.",
             }
+
+        # The worker can be between scheduler start and runtime registration.
+        # Keep the lifecycle state as cancelling; _run will settle it safely.
+        return {
+            "success": True,
+            "data": {"task_id": task_key, "status": "cancelling"},
+            "output": "Отмена запрошена.",
+        }
 
     def status(self, task_id):
         with self._lock:
@@ -213,7 +234,7 @@ class TaskManager:
                 }
             data = task.snapshot(True)
 
-        if data["status"] in {"queued", "running"}:
+        if data["status"] in {"queued", "running", "cancelling"}:
             return {
                 "success": True,
                 "data": data,
