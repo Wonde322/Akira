@@ -1,9 +1,4 @@
-"""Persistent autonomous task runtime for Akira.
-
-This is the canonical background scheduler. It owns persistence, worker threads
-and public task APIs; AgentRuntime owns the actual agent execution and
-cooperative cancellation.
-"""
+"""Persistent autonomous task runtime for Akira."""
 from __future__ import annotations
 
 import json
@@ -42,8 +37,7 @@ class TaskRuntime:
         if not task_id or not goal: return None
         status = str(raw.get("status") or "failed").strip().lower()
         if status not in _VALID_STATUSES: status = "failed"
-        if status in {"running", "cancelling"}:
-            status = "interrupted"
+        if status in {"running", "cancelling", "queued"}: status = "interrupted"
         session_id = str(raw.get("session_id") or f"background:{task_id}").strip() or f"background:{task_id}"
         normalized = dict(raw)
         normalized.update({"id": task_id, "goal": goal, "session_id": session_id, "status": status})
@@ -55,8 +49,7 @@ class TaskRuntime:
         for key in ("created_at", "started_at", "finished_at"):
             value = raw.get(key)
             normalized[key] = str(value) if value is not None else None
-        normalized.setdefault("result", None)
-        normalized.setdefault("error", None)
+        normalized.setdefault("result", None); normalized.setdefault("error", None)
         return normalized
 
     def _load(self):
@@ -103,8 +96,8 @@ class TaskRuntime:
 
     @staticmethod
     def _event_payload(task, *, result=None, error=None):
-        return {"task_id": task.get("id"), "goal": task.get("goal"),
-                "result": result, "error": error, "session_id": task.get("session_id")}
+        return {"task_id": task.get("id"), "goal": task.get("goal"), "result": result,
+                "error": error, "session_id": task.get("session_id")}
 
     def spawn(self, goal, session_id=None, *, parent_event_id=None, correlation_id=None, causation_depth=0):
         goal = str(goal or "").strip()
@@ -118,23 +111,29 @@ class TaskRuntime:
             task_id = task["id"]
             self._tasks[task_id] = task
             try:
+                # Submit first. A failed submission must not pretend that execution started.
+                future = self._executor.submit(self._run, task_id)
                 task["status"] = "running"
                 task["started_at"] = datetime.now().isoformat(timespec="seconds")
+                # A synchronous/mock executor can finish before submit returns. Never reinsert
+                # a stale future after _run has already performed terminal cleanup.
+                if task.get("status") not in _TERMINAL_STATUSES and not future.done():
+                    self._futures[task_id] = future
                 self._save()
-                future = self._executor.submit(self._run, task_id)
-                self._futures[task_id] = future
             except Exception as error:
-                task["status"] = "failed"; task["error"] = str(error); task["finished_at"] = datetime.now().isoformat(timespec="seconds")
+                task["status"] = "failed"; task["error"] = str(error)
+                task["finished_at"] = datetime.now().isoformat(timespec="seconds")
+                task["started_at"] = None
                 self._save(); failed_task = dict(task)
         if failed_task is not None:
             self._emit("task.failed", self._event_payload(failed_task, error=failed_task.get("error")), task=failed_task)
             return {"success": False, "error": "task_submit_failed", "task_id": task_id, "status": "failed", "output": f"Не удалось запустить background task: {failed_task.get('error')}"}
         self._emit("task.started", self._event_payload(task), task=task)
-        return {"success": True, "task_id": task_id, "status": "running", "goal": goal, "output": f"Background task {task_id} запущен."}
+        status = task.get("status", "running")
+        return {"success": True, "task_id": task_id, "status": status, "goal": goal, "output": f"Background task {task_id} запущен."}
 
     def cancel(self, task_id, reason="Cancelled by user"):
-        task_id = str(task_id)
-        emit_task = None
+        task_id = str(task_id); emit_task = None
         with self._lock:
             task = self._tasks.get(task_id)
             if task is None: return {"success": False, "error": "task_not_found", "task_id": task_id}
@@ -142,7 +141,8 @@ class TaskRuntime:
                 return {"success": False, "error": "task_not_active", "task_id": task_id, "status": task.get("status")}
             future = self._futures.get(task_id)
             if future is not None and future.cancel():
-                task["status"] = "cancelled"; task["error"] = str(reason); task["finished_at"] = datetime.now().isoformat(timespec="seconds")
+                task["status"] = "cancelled"; task["error"] = str(reason)
+                task["finished_at"] = datetime.now().isoformat(timespec="seconds")
                 self._futures.pop(task_id, None); self._save(); emit_task = dict(task)
             else:
                 task["status"] = "cancelling"; task["error"] = str(reason); self._save()
@@ -154,33 +154,33 @@ class TaskRuntime:
         return {"success": True, "task_id": task_id, "status": "cancelling", "output": "Отмена запрошена. Текущий безопасный шаг завершится, следующий не начнётся."}
 
     def _run(self, task_id):
-        event_type = None; event_payload = None; event_task = None
+        event_type = event_payload = event_task = None
         try:
             with self._lock:
                 task = self._tasks.get(task_id)
                 if task is None or task.get("status") in {"cancelled", "cancelling"}:
                     if task is not None and task.get("status") == "cancelling":
-                        task["status"] = "cancelled"; task["finished_at"] = datetime.now().isoformat(timespec="seconds"); self._save()
-                        event_type = "task.cancelled"; event_payload = self._event_payload(task, error=task.get("error")); event_task = dict(task)
+                        task["status"] = "cancelled"; task["finished_at"] = datetime.now().isoformat(timespec="seconds")
+                        self._save(); event_type = "task.cancelled"; event_payload = self._event_payload(task, error=task.get("error")); event_task = dict(task)
                     return None
                 goal = task["goal"]; session_id = task["session_id"]
-            from agent_runtime import ExecutionCancelled, get_agent_runtime
+            from agent_runtime import get_agent_runtime
             result = get_agent_runtime().run(goal, session_id=session_id, mode="background", task_id=task_id)
             with self._lock:
                 task = self._tasks.get(task_id)
                 if task is None: return None
                 if task.get("status") == "cancelling":
                     task["status"] = "cancelled"; task["finished_at"] = datetime.now().isoformat(timespec="seconds")
-                    event_type = "task.cancelled"; event_payload = self._event_payload(task, error=task.get("error")); event_task = dict(task); self._save(); return None
-                if task.get("status") == "cancelled": return None
-                task["status"] = "completed"; task["result"] = str(result); task["finished_at"] = datetime.now().isoformat(timespec="seconds"); task["error"] = None; self._save()
-                event_type = "task.completed"; event_payload = self._event_payload(task, result=str(result)); event_task = dict(task)
+                    event_type = "task.cancelled"; event_payload = self._event_payload(task, error=task.get("error")); event_task = dict(task); self._save()
+                elif task.get("status") != "cancelled":
+                    task["status"] = "completed"; task["result"] = str(result)
+                    task["finished_at"] = datetime.now().isoformat(timespec="seconds"); task["error"] = None; self._save()
+                    event_type = "task.completed"; event_payload = self._event_payload(task, result=str(result)); event_task = dict(task)
         except Exception as error:
             try:
                 from agent_runtime import ExecutionCancelled
                 cancelled = isinstance(error, ExecutionCancelled)
-            except Exception:
-                cancelled = False
+            except Exception: cancelled = False
             with self._lock:
                 task = self._tasks.get(task_id)
                 if task is None or task.get("status") == "cancelled": return None
@@ -188,9 +188,11 @@ class TaskRuntime:
                     task["status"] = "cancelled"; task["finished_at"] = datetime.now().isoformat(timespec="seconds")
                     event_type = "task.cancelled"; event_payload = self._event_payload(task, error=task.get("error") or "Cancelled"); event_task = dict(task); self._save()
                 else:
-                    task["status"] = "failed"; task["error"] = str(error); task["result"] = None; task["finished_at"] = datetime.now().isoformat(timespec="seconds"); task["traceback"] = traceback.format_exc()[-4000:]; self._save()
-                    event_type = "task.failed"; event_payload = self._event_payload(task, error=str(error)); event_task = dict(task)
+                    task["status"] = "failed"; task["error"] = str(error); task["result"] = None
+                    task["finished_at"] = datetime.now().isoformat(timespec="seconds"); task["traceback"] = traceback.format_exc()[-4000:]
+                    self._save(); event_type = "task.failed"; event_payload = self._event_payload(task, error=str(error)); event_task = dict(task)
         finally:
+            # Terminal observers must never see a stale worker future.
             with self._lock:
                 self._futures.pop(task_id, None)
                 self._save()
@@ -238,7 +240,6 @@ class TaskRuntime:
 
 _runtime = None
 _runtime_lock = threading.Lock()
-
 def get_runtime():
     global _runtime
     if _runtime is None:
