@@ -32,10 +32,7 @@ class TaskRuntime:
         if isinstance(max_workers, bool) or int(max_workers) < 1:
             raise ValueError("max_workers must be a positive integer")
         self.max_workers = int(max_workers)
-        self._executor = ThreadPoolExecutor(
-            max_workers=self.max_workers,
-            thread_name_prefix="akira-bg",
-        )
+        self._executor = ThreadPoolExecutor(max_workers=self.max_workers, thread_name_prefix="akira-bg")
         self._lock = threading.RLock()
         self._tasks = {}
         self._futures = {}
@@ -54,14 +51,8 @@ class TaskRuntime:
             status = "failed"
         if status in _ACTIVE_STATUSES:
             status = "interrupted"
-        session_id = str(raw.get("session_id") or f"background:{task_id}").strip()
         task = dict(raw)
-        task.update({
-            "id": task_id,
-            "goal": goal,
-            "session_id": session_id or f"background:{task_id}",
-            "status": status,
-        })
+        task.update({"id": task_id, "goal": goal, "session_id": str(raw.get("session_id") or f"background:{task_id}").strip() or f"background:{task_id}", "status": status})
         try:
             task["causation_depth"] = max(0, int(raw.get("causation_depth") or 0))
         except (TypeError, ValueError):
@@ -77,7 +68,6 @@ class TaskRuntime:
         return task
 
     def _load(self):
-        TASK_DIR.mkdir(parents=True, exist_ok=True)
         if not TASK_FILE.exists():
             return
         try:
@@ -101,7 +91,7 @@ class TaskRuntime:
             self._emit("task.interrupted", self._event_payload(task, error=task["error"]), task)
 
     def _save(self):
-        TASK_DIR.mkdir(parents=True, exist_ok=True)
+        TASK_FILE.parent.mkdir(parents=True, exist_ok=True)
         payload = list(self._tasks.values())[-MAX_STORED_TASKS:]
         fd, temp_path = tempfile.mkstemp(prefix=".background-tasks-", suffix=".tmp", dir=TASK_FILE.parent)
         try:
@@ -130,12 +120,7 @@ class TaskRuntime:
         except (TypeError, ValueError):
             depth = 0
         now = _now()
-        return {
-            "id": task_id, "goal": str(goal).strip(), "session_id": str(session_id),
-            "parent_event_id": parent_event_id, "correlation_id": correlation_id,
-            "causation_depth": depth, "status": "queued", "created_at": now,
-            "started_at": None, "finished_at": None, "result": None, "error": None,
-        }
+        return {"id": task_id, "goal": str(goal).strip(), "session_id": str(session_id), "parent_event_id": parent_event_id, "correlation_id": correlation_id, "causation_depth": depth, "status": "queued", "created_at": now, "started_at": None, "finished_at": None, "result": None, "error": None}
 
     @staticmethod
     def _event_payload(task, *, result=None, error=None):
@@ -159,10 +144,13 @@ class TaskRuntime:
             self._tasks[task_id] = task
             try:
                 future = self._executor.submit(self._run, task_id)
-                self._futures[task_id] = future
                 if task["status"] not in _TERMINAL_STATUSES:
                     task["status"] = "running"
                     task["started_at"] = _now()
+                if future.done():
+                    self._futures.pop(task_id, None)
+                else:
+                    self._futures[task_id] = future
                 self._save()
             except Exception as error:
                 task.update(status="failed", error=str(error), result=None, finished_at=_now())
@@ -343,3 +331,21 @@ def cancel_task(task_id, reason="Cancelled by user"):
 
 def list_tasks(limit=20):
     return get_runtime().list_tasks(limit)
+
+
+# Tool registry compatibility: keep the public capability names stable while
+# the implementation remains centered on TaskRuntime.
+def background_task_start(goal, session_id=None, **kwargs):
+    return spawn_task(goal, session_id=session_id, **kwargs)
+
+
+def background_task_status(task_id):
+    return task_status(task_id)
+
+
+def background_task_result(task_id):
+    return task_result(task_id)
+
+
+def background_task_cancel(task_id, reason="Cancelled by user"):
+    return cancel_task(task_id, reason)
