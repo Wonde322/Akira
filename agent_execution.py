@@ -18,6 +18,11 @@ def tool_result(success, error, output):
 
 
 def execute(function_name, arguments):
+    """Resolve and execute a tool after validating permission.
+
+    Unknown tools are rejected before the permission layer so an invalid model
+    tool call can never trigger a user confirmation prompt.
+    """
     function = get_tool_implementation(function_name)
     resolved_name = function_name
     capability_resolution = None
@@ -27,6 +32,9 @@ def execute(function_name, arguments):
         if capability_resolution.get("success"):
             resolved_name = capability_resolution["tool"]
             function = get_tool_implementation(resolved_name)
+
+    if function is None:
+        return tool_result(False, "unknown", "Неизвестный инструмент."), "unknown"
 
     permission = get_permission(resolved_name)
     if permission == "blocked":
@@ -39,18 +47,19 @@ def execute(function_name, arguments):
     else:
         decision = "auto"
 
-    if function is None:
-        return tool_result(False, "unknown", "Неизвестный инструмент."), decision
-
     try:
         output = function(**arguments)
     except Exception as error:
         return tool_result(False, "error", "Ошибка выполнения инструмента: " + str(error)), decision
 
     if is_structured(output):
-        return output, decision
+        result = output
+    else:
+        result = tool_result(True, None, output)
 
-    result = tool_result(True, None, output)
+    # Preserve provenance for both structured and legacy tool results. The
+    # router may resolve a semantic capability to another concrete tool, and
+    # downstream audit/recovery code must be able to see that mapping.
     result.setdefault("requested_tool", function_name)
     result.setdefault("resolved_tool", resolved_name)
     if capability_resolution is not None:
