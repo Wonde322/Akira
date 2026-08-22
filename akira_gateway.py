@@ -1,4 +1,3 @@
-\
 """
 Unified entry gateway for Akira.
 
@@ -35,12 +34,7 @@ class AkiraGateway:
             request_id=request_id,
         )
 
-        router = getattr(
-            self.runtime,
-            "route_request",
-            None,
-        )
-
+        router = getattr(self.runtime, "route_request", None)
         if callable(router):
             return router(request)
 
@@ -51,34 +45,17 @@ class AkiraGateway:
             metadata=request.metadata,
         )
 
-    def submit_text(
-        self,
-        text,
-        metadata=None,
-    ):
-        return self.submit(
-            text=text,
-            source="text",
-            metadata=metadata,
-        )
+    def submit_text(self, text, metadata=None):
+        return self.submit(text=text, source="text", metadata=metadata)
 
-    def submit_voice(
-        self,
-        transcript,
-        metadata=None,
-    ):
+    def submit_voice(self, transcript, metadata=None):
         return self.submit(
             voice_text=transcript,
             source="voice",
             metadata=metadata,
         )
 
-    def submit_ui(
-        self,
-        text=None,
-        observation=None,
-        metadata=None,
-    ):
+    def submit_ui(self, text=None, observation=None, metadata=None):
         return self.submit(
             text=text,
             observation=observation,
