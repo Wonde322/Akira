@@ -1,134 +1,137 @@
-"""Persistent in-process background task runtime for Akira.
-
-A background task gets its own Session and executes independently
-from the foreground conversation.
-"""
+"""Persistent autonomous task runtime for Akira."""
 from __future__ import annotations
-
-import json
-import threading
-import traceback
-import uuid
-from concurrent.futures import Future, ThreadPoolExecutor
+import json, threading, traceback, uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
-TASK_DIR = ROOT / "runtime" / "tasks"
-TASK_FILE = ROOT / "runtime" / "background_tasks.json"
-MAX_CONCURRENT_TASKS = 3
-MAX_STORED_TASKS = 100
-_TERMINAL_STATUSES = {"completed", "failed", "cancelled", "interrupted"}
-_VALID_STATUSES = _TERMINAL_STATUSES | {"queued", "running"}
-
+ROOT=Path(__file__).resolve().parent
+TASK_DIR=ROOT/"runtime"/"tasks"; TASK_FILE=ROOT/"runtime"/"background_tasks.json"
+MAX_CONCURRENT_TASKS=3; MAX_STORED_TASKS=100
+_TERMINAL_STATUSES={"completed","failed","cancelled","interrupted"}
+_VALID_STATUSES=_TERMINAL_STATUSES|{"queued","running","cancelling"}
 
 class TaskRuntime:
-    """Threaded autonomous task manager."""
-
-    def __init__(self, max_workers=MAX_CONCURRENT_TASKS):
-        self.max_workers = max_workers
-        self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="akira-bg")
-        self._lock = threading.RLock(); self._tasks = {}; self._futures = {}; self._load()
-
+    """Persistent threaded scheduler for autonomous agent work."""
+    def __init__(self,max_workers=MAX_CONCURRENT_TASKS):
+        self.max_workers=max_workers; self._executor=ThreadPoolExecutor(max_workers=max_workers,thread_name_prefix="akira-bg")
+        self._lock=threading.RLock(); self._tasks={}; self._futures={}; self._load()
     @staticmethod
     def _normalize_loaded_task(raw):
-        if not isinstance(raw, dict): return None
-        task_id = str(raw.get("id") or "").strip()
-        goal = str(raw.get("goal") or "").strip()
-        if not task_id or not goal: return None
-        status = str(raw.get("status") or "failed").strip().lower()
-        if status not in _VALID_STATUSES: status = "failed"
-        session_id = str(raw.get("session_id") or f"background:{task_id}").strip() or f"background:{task_id}"
-        normalized = dict(raw)
-        normalized.update({"id": task_id, "goal": goal, "session_id": session_id, "status": status})
-        try: normalized["causation_depth"] = max(0, int(raw.get("causation_depth") or 0))
-        except Exception: normalized["causation_depth"] = 0
-        for key in ("parent_event_id", "correlation_id"):
-            value = raw.get(key)
-            normalized[key] = str(value).strip() if value is not None and str(value).strip() else None
-        for key in ("created_at", "started_at", "finished_at"):
-            value = raw.get(key)
-            normalized[key] = str(value) if value is not None else None
-        normalized.setdefault("result", None); normalized.setdefault("error", None)
-        return normalized
-
+        if not isinstance(raw,dict): return None
+        task_id=str(raw.get("id") or "").strip(); goal=str(raw.get("goal") or "").strip()
+        if not task_id or not goal:return None
+        status=str(raw.get("status") or "failed").strip().lower()
+        if status not in _VALID_STATUSES:status="failed"
+        if status in {"queued","running","cancelling"}:status="interrupted"
+        session_id=str(raw.get("session_id") or f"background:{task_id}").strip() or f"background:{task_id}"
+        normalized=dict(raw); normalized.update({"id":task_id,"goal":goal,"session_id":session_id,"status":status})
+        try: normalized["causation_depth"]=max(0,int(raw.get("causation_depth") or 0))
+        except Exception: normalized["causation_depth"]=0
+        for key in ("parent_event_id","correlation_id"):
+            value=raw.get(key); normalized[key]=str(value).strip() if value is not None and str(value).strip() else None
+        for key in ("created_at","started_at","finished_at"):
+            value=raw.get(key); normalized[key]=str(value) if value is not None else None
+        normalized.setdefault("result",None); normalized.setdefault("error",None); return normalized
     def _load(self):
-        TASK_DIR.mkdir(parents=True, exist_ok=True)
-        if not TASK_FILE.exists(): return
-        try: payload = json.loads(TASK_FILE.read_text(encoding="utf-8"))
-        except Exception: return
-        if not isinstance(payload, list): return
-        interrupted = []
+        TASK_DIR.mkdir(parents=True,exist_ok=True)
+        if not TASK_FILE.exists():return
+        try: payload=json.loads(TASK_FILE.read_text(encoding="utf-8"))
+        except Exception:return
+        if not isinstance(payload,list):return
+        interrupted=[]
         for raw in payload[-MAX_STORED_TASKS:]:
-            task = self._normalize_loaded_task(raw)
-            if task is None: continue
-            if task.get("status") == "running":
-                task["status"] = "interrupted"; task["error"] = "Akira process was restarted before this background task completed."; task["finished_at"] = datetime.now().isoformat(timespec="seconds"); interrupted.append(dict(task))
-            self._tasks[task["id"]] = task
+            task=self._normalize_loaded_task(raw)
+            if task is None:continue
+            if task.get("status")=="interrupted":
+                task["error"]="Akira process was restarted before this background task completed."; task["finished_at"]=datetime.now().isoformat(timespec="seconds"); interrupted.append(dict(task))
+            self._tasks[task["id"]]=task
         self._save()
-        for task in interrupted:
-            self._emit("task.interrupted", {"task_id":task.get("id"),"goal":task.get("goal"),"error":task.get("error"),"session_id":task.get("session_id")}, task=task)
-
+        for task in interrupted:self._emit("task.interrupted",self._event_payload(task,error=task.get("error")),task=task)
     def _save(self):
-        TASK_DIR.mkdir(parents=True, exist_ok=True); data=list(self._tasks.values())[-MAX_STORED_TASKS:]; temporary=TASK_FILE.with_suffix(".json.tmp"); temporary.write_text(json.dumps(data,ensure_ascii=False,indent=2),encoding="utf-8"); temporary.replace(TASK_FILE)
-    def _active_count(self): return sum(1 for task in self._tasks.values() if task.get("status") in {"queued","running"})
+        TASK_DIR.mkdir(parents=True,exist_ok=True); temporary=TASK_FILE.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(list(self._tasks.values())[-MAX_STORED_TASKS:],ensure_ascii=False,indent=2),encoding="utf-8"); temporary.replace(TASK_FILE)
+    def _active_count(self):return sum(1 for t in self._tasks.values() if t.get("status") in {"queued","running","cancelling"})
     def _make_task(self,goal,session_id=None,*,parent_event_id=None,correlation_id=None,causation_depth=0):
-        task_id=uuid.uuid4().hex[:12];now=datetime.now().isoformat(timespec="seconds");session_id=session_id or f"background:{task_id}"
+        task_id=uuid.uuid4().hex[:12]; now=datetime.now().isoformat(timespec="seconds"); session_id=session_id or f"background:{task_id}"
         if correlation_id is None and str(session_id).startswith("proactive:"):correlation_id=str(session_id).split(":",1)[1] or None
         try:causation_depth=max(0,int(causation_depth or 0))
         except Exception:causation_depth=0
         return {"id":task_id,"goal":str(goal).strip(),"session_id":session_id,"parent_event_id":parent_event_id,"correlation_id":correlation_id,"causation_depth":causation_depth,"status":"queued","created_at":now,"started_at":None,"finished_at":None,"result":None,"error":None}
+    @staticmethod
+    def _event_payload(task,*,result=None,error=None):
+        payload={"task_id":task.get("id"),"goal":task.get("goal")}
+        if result is not None:payload["result"]=result
+        if error is not None:payload["error"]=error
+        payload["session_id"]=task.get("session_id"); return payload
     def spawn(self,goal,session_id=None,*,parent_event_id=None,correlation_id=None,causation_depth=0):
         goal=str(goal or "").strip()
         if not goal:return {"success":False,"error":"empty_goal","output":"Нельзя создать background task с пустой целью."}
         failed_task=None
         with self._lock:
             if self._active_count()>=self.max_workers:return {"success":False,"error":"background_capacity","output":f"Достигнут лимит одновременно работающих background tasks: {self.max_workers}."}
-            task=self._make_task(goal,session_id,parent_event_id=parent_event_id,correlation_id=correlation_id,causation_depth=causation_depth);task_id=task["id"];self._tasks[task_id]=task
-            task["status"]="running";task["started_at"]=datetime.now().isoformat(timespec="seconds");self._save()
+            task=self._make_task(goal,session_id,parent_event_id=parent_event_id,correlation_id=correlation_id,causation_depth=causation_depth); task_id=task["id"]; self._tasks[task_id]=task
             try:
                 future=self._executor.submit(self._run,task_id)
-                if task.get("status") in {"queued","running"}:self._futures[task_id]=future
+                if task.get("status") not in _TERMINAL_STATUSES:
+                    task["status"]="running"; task["started_at"]=datetime.now().isoformat(timespec="seconds")
+                    if not future.done():self._futures[task_id]=future
+                self._save()
             except Exception as error:
-                task["status"]="failed";task["started_at"]=None;task["error"]=str(error);task["result"]=None;task["finished_at"]=datetime.now().isoformat(timespec="seconds");self._save();failed_task=dict(task)
+                task["status"]="failed"; task["error"]=str(error); task["result"]=None; task["finished_at"]=datetime.now().isoformat(timespec="seconds"); task["started_at"]=None; self._save(); failed_task=dict(task)
         if failed_task is not None:
-            self._emit("task.failed",{"task_id":task_id,"goal":failed_task.get("goal"),"error":failed_task.get("error"),"session_id":failed_task.get("session_id")},task=failed_task)
+            self._emit("task.failed",self._event_payload(failed_task,error=failed_task.get("error")),task=failed_task)
             return {"success":False,"error":"task_submit_failed","task_id":task_id,"status":"failed","output":f"Не удалось запустить background task: {failed_task.get('error')}"}
-        return {"success":True,"task_id":task_id,"status":task.get("status"),"goal":goal,"output":f"Background task {task_id} запущен."}
+        self._emit("task.started",self._event_payload(task),task=task)
+        return {"success":True,"task_id":task_id,"status":task.get("status","running"),"goal":goal,"output":f"Background task {task_id} запущен."}
     def cancel(self,task_id,reason="Cancelled by user"):
-        task_id=str(task_id); cancelled_task=None
+        task_id=str(task_id); emit_task=None
         with self._lock:
             task=self._tasks.get(task_id)
             if task is None:return {"success":False,"error":"task_not_found","task_id":task_id}
             if task.get("status") in _TERMINAL_STATUSES:return {"success":False,"error":"task_not_active","task_id":task_id,"status":task.get("status")}
             future=self._futures.get(task_id)
-            if future is None or not future.cancel():return {"success":False,"error":"task_already_running","task_id":task_id,"status":task.get("status")}
-            task["status"]="cancelled";task["error"]=str(reason);task["finished_at"]=datetime.now().isoformat(timespec="seconds");self._futures.pop(task_id,None);self._save();cancelled_task=dict(task)
-        self._emit("task.cancelled",{"task_id":task_id,"goal":cancelled_task.get("goal"),"error":cancelled_task.get("error"),"session_id":cancelled_task.get("session_id")},task=cancelled_task)
-        return {"success":True,"task_id":task_id,"status":"cancelled"}
+            if future is not None and future.cancel():
+                task["status"]="cancelled";task["error"]=str(reason);task["finished_at"]=datetime.now().isoformat(timespec="seconds");self._futures.pop(task_id,None);self._save();emit_task=dict(task)
+            else:task["status"]="cancelling";task["error"]=str(reason);self._save()
+        if emit_task is not None:
+            self._emit("task.cancelled",self._event_payload(emit_task,error=emit_task.get("error")),task=emit_task);return {"success":True,"task_id":task_id,"status":"cancelled"}
+        from agent_runtime import get_agent_runtime
+        get_agent_runtime().cancel(task_id);return {"success":True,"task_id":task_id,"status":"cancelling","output":"Отмена запрошена. Текущий безопасный шаг завершится, следующий не начнётся."}
     def _run(self,task_id):
-        event_type = None; event_payload = None; event_task = None
+        event_type=event_payload=event_task=None
         try:
             with self._lock:
                 task=self._tasks.get(task_id)
-                if task is None or task.get("status")=="cancelled":return
+                if task is None or task.get("status") in {"cancelled","cancelling"}:
+                    if task is not None and task.get("status")=="cancelling":
+                        task["status"]="cancelled";task["finished_at"]=datetime.now().isoformat(timespec="seconds");self._save();event_type="task.cancelled";event_payload=self._event_payload(task,error=task.get("error"));event_task=dict(task)
+                    return None
                 goal=task["goal"];session_id=task["session_id"]
-            from brain import ask
-            result=ask(goal,session_id=session_id)
+            from agent_runtime import get_agent_runtime
+            result=get_agent_runtime().run(goal,session_id=session_id,mode="background",task_id=task_id)
             with self._lock:
                 task=self._tasks.get(task_id)
-                if task is None or task.get("status")=="cancelled":return
-                task["status"]="completed";task["result"]=str(result);task["finished_at"]=datetime.now().isoformat(timespec="seconds");task["error"]=None;self._save()
-                event_type="task.completed";event_payload={"task_id":task_id,"goal":goal,"result":str(result),"session_id":session_id};event_task=dict(task)
+                if task is None:return None
+                if task.get("status")=="cancelling":
+                    task["status"]="cancelled";task["finished_at"]=datetime.now().isoformat(timespec="seconds");event_type="task.cancelled";event_payload=self._event_payload(task,error=task.get("error"));event_task=dict(task);self._save()
+                elif task.get("status")!="cancelled":
+                    task["status"]="completed";task["result"]=str(result);task["finished_at"]=datetime.now().isoformat(timespec="seconds");task["error"]=None;self._save();event_type="task.completed";event_payload=self._event_payload(task,result=str(result));event_task=dict(task)
         except Exception as error:
+            try:
+                from agent_runtime import ExecutionCancelled;cancelled=isinstance(error,ExecutionCancelled)
+            except Exception:cancelled=False
             with self._lock:
                 task=self._tasks.get(task_id)
-                if task is None or task.get("status")=="cancelled":return
-                task["status"]="failed";task["error"]=str(error);task["result"]=None;task["finished_at"]=datetime.now().isoformat(timespec="seconds");task["traceback"]=traceback.format_exc()[-4000:];self._save()
-                event_type="task.failed";event_payload={"task_id":task_id,"goal":task.get("goal"),"error":str(error),"session_id":task.get("session_id")};event_task=dict(task)
+                if task is None or task.get("status")=="cancelled":return None
+                if cancelled or task.get("status")=="cancelling":
+                    task["status"]="cancelled";task["finished_at"]=datetime.now().isoformat(timespec="seconds");event_type="task.cancelled";event_payload=self._event_payload(task,error=task.get("error") or "Cancelled");event_task=dict(task);self._save()
+                else:
+                    task["status"]="failed";task["error"]=str(error);task["result"]=None;task["finished_at"]=datetime.now().isoformat(timespec="seconds");task["traceback"]=traceback.format_exc()[-4000:];self._save();event_type="task.failed";event_payload=self._event_payload(task,error=str(error));event_task=dict(task)
         finally:
             with self._lock:self._futures.pop(task_id,None);self._save()
-        if event_type is not None:self._emit(event_type,event_payload,task=event_task)
+            if event_type is not None:self._emit(event_type,event_payload,task=event_task)
+        return None if event_type in {"task.cancelled","task.failed"} else (event_payload or {}).get("result")
     @staticmethod
     def _emit(event_type,payload,task=None):
         try:
@@ -159,14 +162,13 @@ class TaskRuntime:
         if status=="completed":return {"success":True,"ready":True,"task_id":task_id,"result":task.get("result"),"output":str(task.get("result") or "")}
         if status in _TERMINAL_STATUSES:return {"success":False,"ready":True,"task_id":task_id,"error":task.get("error"),"status":status,"output":f"Background task {status}: {task.get('error') or ''}"}
         return {"success":True,"ready":False,"task_id":task_id,"status":status,"output":f"Task {task_id} ещё выполняется."}
-
 _runtime=None;_runtime_lock=threading.Lock()
 def get_runtime():
-    global _runtime
-    if _runtime is None:
-        with _runtime_lock:
-            if _runtime is None:_runtime=TaskRuntime()
-    return _runtime
+ global _runtime
+ if _runtime is None:
+  with _runtime_lock:
+   if _runtime is None:_runtime=TaskRuntime()
+ return _runtime
 def background_task_start(goal):return get_runtime().spawn(goal)
 def background_task_status(task_id):return get_runtime().status(task_id)
 def background_tasks(limit=20):return get_runtime().list_tasks(limit)
