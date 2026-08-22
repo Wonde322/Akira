@@ -19,22 +19,21 @@ def get_active_app():
     result = subprocess.run(
         ["osascript", "-e", script],
         capture_output=True,
-        text=True
+        text=True,
     )
 
     if result.returncode != 0:
         return None
 
-    return result.stdout.strip()
+    return result.stdout.strip() or None
 
 
 def save_session(app_name, started_at, ended_at):
     started = datetime.fromisoformat(started_at)
     ended = datetime.fromisoformat(ended_at)
-
     duration = (ended - started).total_seconds()
 
-    # Не записываем совсем короткие переключения
+    # Do not persist negative durations or very short app switches.
     if duration < 5:
         return
 
@@ -46,46 +45,40 @@ def save_session(app_name, started_at, ended_at):
     )
 
     minutes = int(duration // 60)
-
     if minutes >= 1:
-        print(
-            f"{app_name}: {minutes} мин"
-        )
+        print(f"{app_name}: {minutes} мин")
 
 
-print("Activity Tracker запущен.")
+def run_tracker(check_interval=CHECK_INTERVAL):
+    """Track foreground application sessions until interrupted.
 
-current_app = None
-started_at = None
+    Keeping the loop behind an explicit entry point makes the module safe to
+    import from the runtime and from tests.
+    """
+    print("Activity Tracker запущен.")
 
-try:
-    while True:
-        app = get_active_app()
-        now = datetime.now().isoformat(timespec="seconds")
+    current_app = None
+    started_at = None
 
-        if app != current_app:
+    try:
+        while True:
+            app = get_active_app()
+            now = datetime.now().isoformat(timespec="seconds")
 
-            if current_app is not None and started_at is not None:
-                save_session(
-                    current_app,
-                    started_at,
-                    now
-                )
+            if app != current_app:
+                if current_app is not None and started_at is not None:
+                    save_session(current_app, started_at, now)
 
-            current_app = app
-            started_at = now
+                current_app = app
+                started_at = now if app is not None else None
 
-        time.sleep(CHECK_INTERVAL)
+            time.sleep(check_interval)
+    except KeyboardInterrupt:
+        if current_app is not None and started_at is not None:
+            now = datetime.now().isoformat(timespec="seconds")
+            save_session(current_app, started_at, now)
+        print("\nActivity Tracker остановлен.")
 
-except KeyboardInterrupt:
 
-    if current_app is not None and started_at is not None:
-        now = datetime.now().isoformat(timespec="seconds")
-
-        save_session(
-            current_app,
-            started_at,
-            now
-        )
-
-    print("\nActivity Tracker остановлен.")
+if __name__ == "__main__":
+    run_tracker()
