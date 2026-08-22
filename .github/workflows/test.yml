@@ -12,6 +12,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
@@ -19,4 +21,6 @@ jobs:
       - name: Compile source
         run: python -m compileall -q .
       - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
         run: python -m pytest -q
