@@ -12,14 +12,13 @@ def fail(error, detail=None, **metadata):
 
 
 def is_structured(result):
-    """Return True only for values that satisfy the capability result shape."""
-    return (
-        isinstance(result, dict)
-        and isinstance(result.get("success"), bool)
-        and "data" in result
-        and "error" in result
-        and isinstance(result.get("metadata", {}), dict)
-    )
+    """Return True for capability-shaped results, including legacy-minimal forms.
+
+    Older capabilities may return ``success`` + ``data`` without explicitly
+    carrying ``error`` or ``metadata``. Those results still contain structured
+    data and must not be wrapped as plain output dictionaries.
+    """
+    return isinstance(result, dict) and isinstance(result.get("success"), bool) and "data" in result and isinstance(result.get("metadata", {}), dict)
 
 
 def data_to_text(data, limit=None):
@@ -49,6 +48,7 @@ def result_to_text(result):
     if result["success"]:
         return data_to_text(result["data"])
     detail = result["data"]
+    metadata = result.get("metadata") or {}
     if detail is None:
-        detail = result["metadata"].get("message")
+        detail = metadata.get("message")
     return "ОШИБКА (" + str(result.get("error") or "unknown_error") + "): " + data_to_text(detail)
