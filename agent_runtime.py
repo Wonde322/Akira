@@ -19,7 +19,6 @@ from execution_context import (
     raise_if_execution_cancelled,
 )
 
-
 _guard_lock = RLock()
 
 
@@ -45,10 +44,16 @@ def _install_cancellation_guards(agent_loop):
 
 
 def _run_agent_turn(goal, session_id=None):
+    """Run through the public compatibility entry point.
+
+    ``brain`` remains a thin facade over the real agent loop, while using its
+    public entry point preserves existing callers and test-level substitution.
+    """
     raise_if_execution_cancelled()
     import agent_loop
     _install_cancellation_guards(agent_loop)
-    result = agent_loop.ask(goal, session_id=session_id)
+    from brain import ask
+    result = ask(goal, session_id=session_id)
     raise_if_execution_cancelled()
     return result
 
@@ -124,7 +129,6 @@ class AgentRuntime:
     def is_active(self, task_id):
         with self._lock:
             return str(task_id or "") in self._active
-
 
 _default_runtime = AgentRuntime()
 
