@@ -105,12 +105,19 @@ def shell(command, timeout=None, cwd=None):
 
     stdout, stdout_truncated = _truncate_output(outcome["stdout"])
     stderr, stderr_truncated = _truncate_output(outcome["stderr"])
+    metadata = {
+        "truncated": stdout_truncated or stderr_truncated,
+        "stdout_truncated": stdout_truncated,
+        "stderr_truncated": stderr_truncated,
+    }
+    data = {
+        "exit_code": outcome["exit_code"],
+        "stdout": stdout,
+        "stderr": stderr,
+    }
 
-    return ok(
-        {
-            "exit_code": outcome["exit_code"],
-            "stdout": stdout,
-            "stderr": stderr,
-        },
-        truncated=stdout_truncated or stderr_truncated,
-    )
+    if outcome["exit_code"] != 0:
+        detail = stderr or stdout or "Команда завершилась с ненулевым кодом выхода."
+        return fail("nonzero_exit", detail, **metadata, exit_code=outcome["exit_code"])
+
+    return ok(data, **metadata)
