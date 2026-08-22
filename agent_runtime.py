@@ -18,6 +18,7 @@ from execution_context import (
     execution_cancelled,
     raise_if_execution_cancelled,
 )
+from execution_policy import choose_execution_policy
 
 _guard_lock = RLock()
 
@@ -44,11 +45,7 @@ def _install_cancellation_guards(agent_loop):
 
 
 def _run_agent_turn(goal, session_id=None):
-    """Run through the public compatibility entry point.
-
-    ``brain`` remains a thin facade over the real agent loop, while using its
-    public entry point preserves existing callers and test-level substitution.
-    """
+    """Run through the public compatibility entry point."""
     raise_if_execution_cancelled()
     import agent_loop
     _install_cancellation_guards(agent_loop)
@@ -61,9 +58,9 @@ def _run_agent_turn(goal, session_id=None):
 class AgentRuntime:
     """Owns active execution contexts and cooperative cancellation signals.
 
-    ``cancel`` also records cancellation requested before a worker has reached
-    runtime registration. This closes the scheduler→runtime race for background
-    tasks without forcing schedulers to know about execution internals.
+    Every caller uses the same runtime, but each execution receives the narrowest
+    policy appropriate for its request. The policy is execution-local state so
+    reasoning and capabilities can adapt without creating separate agent stacks.
     """
 
     def __init__(self, executor: Optional[Callable[..., str]] = None):
@@ -80,12 +77,17 @@ class AgentRuntime:
             self._executor = _run_agent_turn
         return self._executor
 
-    def run(self, goal, session_id=None, *, mode="foreground", task_id=None):
+    def run(self, goal, session_id=None, *, mode="auto", task_id=None):
         goal = str(goal or "").strip()
         if not goal:
             raise ValueError("AgentRuntime requires a non-empty goal")
 
         task_key = str(task_id or "") or None
+        policy = choose_execution_policy(
+            goal,
+            mode=mode,
+            background=bool(task_key and str(mode or "").lower() == "background"),
+        )
         cancel_event = Event()
         if task_key:
             with self._lock:
@@ -97,7 +99,7 @@ class AgentRuntime:
         context = ExecutionContext(
             goal=goal,
             session_id=session_id,
-            mode=str(mode or "foreground"),
+            mode=policy.value,
             task_id=task_key,
             _cancel_event=cancel_event,
         )
@@ -129,6 +131,7 @@ class AgentRuntime:
     def is_active(self, task_id):
         with self._lock:
             return str(task_id or "") in self._active
+
 
 _default_runtime = AgentRuntime()
 
