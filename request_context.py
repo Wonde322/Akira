@@ -1,4 +1,3 @@
-\
 """
 Unified request model for Akira.
 
@@ -23,11 +22,7 @@ class RequestContext:
     created_at: float = field(default_factory=time.time)
 
     def primary_text(self):
-        return (
-            self.text
-            or self.voice_text
-            or ""
-        )
+        return self.text or self.voice_text or ""
 
     def to_dict(self):
         return {

@@ -2,7 +2,23 @@ from format import format_duration
 from memory import get_activity_for_period
 
 
+def _normalize_days(days):
+    if isinstance(days, bool):
+        raise ValueError("days должен быть положительным целым числом")
+
+    try:
+        value = int(days)
+    except (TypeError, ValueError) as error:
+        raise ValueError("days должен быть положительным целым числом") from error
+
+    if value < 1:
+        raise ValueError("days должен быть положительным целым числом")
+
+    return value
+
+
 def get_activity_stats(days=1):
+    days = _normalize_days(days)
     activity = get_activity_for_period(days)
 
     totals = {}
@@ -23,11 +39,10 @@ def get_activity_stats(days=1):
     sorted_apps = sorted(
         totals.items(),
         key=lambda item: item[1],
-        reverse=True
+        reverse=True,
     )
 
     title = "Сегодня" if days == 1 else f"Последние {days} дней"
-
     result = title + "\n\n"
 
     for app, seconds in sorted_apps:

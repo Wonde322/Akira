@@ -1,10 +1,8 @@
 import json
-import os
 import threading
 
 from config import PERMISSIONS_FILE
 from tool_registry import get_default_tool_permissions
-
 
 DEFAULT_PERMISSIONS = get_default_tool_permissions()
 _VALID_LEVELS = {"auto", "confirm", "blocked"}
@@ -20,8 +18,7 @@ def prompt_on_stdin(tool_name, arguments):
     print("Акира хочет выполнить действие:")
     print("Инструмент:", tool_name)
     print("Параметры:", arguments)
-    answer = input("Разрешить? [да/нет]: ").strip().lower()
-    return answer in ["да", "д", "yes", "y"]
+    return input("Разрешить? [да/нет]: ").strip().lower() in ["да", "д", "yes", "y"]
 
 
 def deny_all(tool_name, arguments):
@@ -41,6 +38,13 @@ def _normalize_permissions(payload):
             if level not in _VALID_LEVELS:
                 level = default
         normalized[name] = level
+    # Preserve explicit compatibility/custom entries instead of silently
+    # deleting user configuration that predates the current registry.
+    for name, level in payload.items():
+        if name not in normalized and isinstance(level, str):
+            level = level.strip().lower()
+            if level in _VALID_LEVELS:
+                normalized[name] = level
     return normalized
 
 
@@ -71,6 +75,8 @@ class PermissionManager:
             return self._permissions
 
     def get_permission(self, tool_name):
+        # Execution rejects unknown tools before this layer. Keep the historic
+        # manager contract for callers that query or configure custom names.
         return self._get().get(tool_name, "confirm")
 
     def set_permission(self, tool_name, level):
@@ -78,18 +84,16 @@ class PermissionManager:
             return "Недопустимый уровень разрешения."
         with self._lock:
             permissions = self._get()
-            permissions[tool_name] = level
+            permissions[str(tool_name)] = level
             save_permissions(permissions, self.permission_file)
-        return "Для " + tool_name + " установлен уровень: " + level
+        return "Для " + str(tool_name) + " установлен уровень: " + level
 
     def set_confirmation_provider(self, provider):
         self.confirmation_provider = provider
 
     def request_confirmation(self, tool_name, arguments):
         provider = self.confirmation_provider
-        if provider is None:
-            return False
-        return bool(provider(tool_name, arguments))
+        return bool(provider(tool_name, arguments)) if provider is not None else False
 
 
 _default_manager = None

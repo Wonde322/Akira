@@ -1,21 +1,13 @@
-"""Single execution boundary and lifecycle control for Akira agent runs.
-
-UI, voice, foreground tasks and persistent background tasks enter the agent
-through this module. Task scheduling lives outside this runtime; execution-local
-identity and cooperative cancellation live in ``execution_context``.
-"""
+"""Single execution boundary and lifecycle control for Akira agent runs."""
 from __future__ import annotations
 
 from threading import Event, RLock
 from typing import Callable, Optional
 
 from execution_context import (
-    ExecutionCancelled,
     ExecutionContext,
     activate_execution,
-    current_execution,
     deactivate_execution,
-    execution_cancelled,
     raise_if_execution_cancelled,
 )
 from execution_policy import choose_execution_policy
@@ -45,7 +37,6 @@ def _install_cancellation_guards(agent_loop):
 
 
 def _run_agent_turn(goal, session_id=None):
-    """Run through the public compatibility entry point."""
     raise_if_execution_cancelled()
     import agent_loop
     _install_cancellation_guards(agent_loop)
@@ -56,12 +47,7 @@ def _run_agent_turn(goal, session_id=None):
 
 
 class AgentRuntime:
-    """Owns active execution contexts and cooperative cancellation signals.
-
-    Every caller uses the same runtime, but each execution receives the narrowest
-    policy appropriate for its request. The policy is execution-local state so
-    reasoning and capabilities can adapt without creating separate agent stacks.
-    """
+    """Owns active execution contexts and cooperative cancellation signals."""
 
     def __init__(self, executor: Optional[Callable[..., str]] = None):
         self._executor = executor
@@ -70,12 +56,16 @@ class AgentRuntime:
         self._pending_cancel = set()
 
     def set_executor(self, executor: Callable[..., str]):
-        self._executor = executor
+        if not callable(executor):
+            raise TypeError("executor must be callable")
+        with self._lock:
+            self._executor = executor
 
     def _resolve_executor(self):
-        if self._executor is None:
-            self._executor = _run_agent_turn
-        return self._executor
+        with self._lock:
+            if self._executor is None:
+                self._executor = _run_agent_turn
+            return self._executor
 
     def run(self, goal, session_id=None, *, mode="auto", task_id=None):
         goal = str(goal or "").strip()
@@ -91,6 +81,8 @@ class AgentRuntime:
         cancel_event = Event()
         if task_key:
             with self._lock:
+                if task_key in self._active:
+                    raise RuntimeError("An execution with this task_id is already active")
                 if task_key in self._pending_cancel:
                     self._pending_cancel.discard(task_key)
                     cancel_event.set()
@@ -125,8 +117,8 @@ class AgentRuntime:
             if event is None:
                 self._pending_cancel.add(task_key)
                 return False
-        event.set()
-        return True
+            event.set()
+            return True
 
     def is_active(self, task_id):
         with self._lock:
