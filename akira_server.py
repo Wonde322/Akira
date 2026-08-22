@@ -2,22 +2,16 @@ import json
 import secrets
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 
 from brain import ask
 from config import PROJECT_ROOT
 from permissions import deny_all, set_confirmation_provider
 
-
 HOST = "127.0.0.1"
 PORT = 8765
 MAX_REQUEST_BYTES = 1_000_000
-
-# Local origins from which the Web UI may call the API.
-ALLOWED_ORIGINS = {
-    f"http://{HOST}:{PORT}",
-    f"http://localhost:{PORT}",
-}
-
+ALLOWED_ORIGINS = {f"http://{HOST}:{PORT}", f"http://localhost:{PORT}"}
 ALLOWED_HEADERS = "Content-Type, X-Akira-Session"
 ALLOWED_METHODS = "GET, POST, OPTIONS"
 MAX_SESSIONS = 200
@@ -34,7 +28,6 @@ def issue_session():
     with _sessions_lock:
         while len(_sessions) >= MAX_SESSIONS:
             _sessions.pop(next(iter(_sessions)))
-
         token = secrets.token_urlsafe(32)
         _sessions[token] = True
     return token
@@ -52,8 +45,13 @@ def _session_id_from_auth(header):
     return token if validate_session(token) else None
 
 
-class AkiraHandler(BaseHTTPRequestHandler):
+def _index_file():
+    """Prefer an explicitly supplied local web root, then the project asset."""
+    local = Path.cwd() / "web" / "index.html"
+    return local if local.exists() else PROJECT_ROOT / "web" / "index.html"
 
+
+class AkiraHandler(BaseHTTPRequestHandler):
     def send_cors(self):
         origin = self.headers.get("Origin")
         if not allowed_origin(origin):
@@ -69,11 +67,10 @@ class AkiraHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def _serve_index(self):
-        index_file = PROJECT_ROOT / "web" / "index.html"
+        index_file = _index_file()
         if not index_file.exists():
             self.send_error(404, "index.html not found")
             return
-
         content = index_file.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -94,58 +91,47 @@ class AkiraHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path in ["/", "/index.html"]:
             self._serve_index()
-            return
-        if self.path == "/session":
+        elif self.path == "/session":
             self._serve_session()
-            return
-        self.send_error(404)
+        else:
+            self.send_error(404)
 
     def do_POST(self):
         if self.path != "/ask":
             self.send_error(404)
             return
-
         session_id = _session_id_from_auth(self.headers.get("X-Akira-Session"))
         if session_id is None:
             self.send_error(401, "Unauthorized")
             return
-
         try:
             length = int(self.headers.get("Content-Length", 0))
         except ValueError:
             self.send_error(400, "Invalid Content-Length")
             return
-
         if length < 1:
             self.send_error(400, "Пустое сообщение")
             return
         if length > MAX_REQUEST_BYTES:
             self.send_error(413, "Request body too large")
             return
-
         try:
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             self.send_error(400, "Invalid JSON")
             return
-
         if not isinstance(payload, dict):
             self.send_error(400, "JSON payload must be an object")
             return
-
         message = payload.get("message")
         if not isinstance(message, str) or not message.strip():
             self.send_error(400, "Пустое сообщение")
             return
-
         try:
             answer = ask(message.strip(), session_id=session_id)
         except Exception:
-            # Do not expose internal paths, credentials or provider details to
-            # the browser. Server-side logs still retain the exception context.
             self.send_error(500, "Internal server error")
             return
-
         response = json.dumps({"answer": answer}, ensure_ascii=False).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -159,9 +145,6 @@ class AkiraHandler(BaseHTTPRequestHandler):
 
 
 def create_server(host=HOST, port=PORT):
-    # The HTTP transport cannot safely block on an interactive stdin prompt.
-    # Scope this policy to explicit server startup rather than applying it as an
-    # import-time side effect to every other runtime in the process.
     set_confirmation_provider(deny_all)
     return HTTPServer((host, port), AkiraHandler)
 
