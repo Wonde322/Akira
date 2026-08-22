@@ -5,7 +5,6 @@ import threading
 from config import PERMISSIONS_FILE
 from tool_registry import get_default_tool_permissions
 
-
 DEFAULT_PERMISSIONS = get_default_tool_permissions()
 _VALID_LEVELS = {"auto", "confirm", "blocked"}
 
@@ -20,8 +19,7 @@ def prompt_on_stdin(tool_name, arguments):
     print("Акира хочет выполнить действие:")
     print("Инструмент:", tool_name)
     print("Параметры:", arguments)
-    answer = input("Разрешить? [да/нет]: ").strip().lower()
-    return answer in ["да", "д", "yes", "y"]
+    return input("Разрешить? [да/нет]: ").strip().lower() in ["да", "д", "yes", "y"]
 
 
 def deny_all(tool_name, arguments):
@@ -71,9 +69,14 @@ class PermissionManager:
             return self._permissions
 
     def get_permission(self, tool_name):
-        return self._get().get(tool_name, "confirm")
+        # Unknown names must never reach an interactive confirmation prompt or
+        # accidentally inherit an executable default. Only registered tools
+        # have permission policies.
+        return self._get().get(tool_name, "blocked")
 
     def set_permission(self, tool_name, level):
+        if tool_name not in DEFAULT_PERMISSIONS:
+            return "Неизвестный инструмент."
         if not isinstance(level, str) or level not in _VALID_LEVELS:
             return "Недопустимый уровень разрешения."
         with self._lock:
@@ -87,9 +90,7 @@ class PermissionManager:
 
     def request_confirmation(self, tool_name, arguments):
         provider = self.confirmation_provider
-        if provider is None:
-            return False
-        return bool(provider(tool_name, arguments))
+        return bool(provider(tool_name, arguments)) if provider is not None else False
 
 
 _default_manager = None
