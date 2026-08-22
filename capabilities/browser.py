@@ -1,4 +1,5 @@
 
+
 """Chrome DevTools Protocol browser capability for Akira.
 
 No Playwright/Selenium dependency.
@@ -36,6 +37,19 @@ import urllib.request
 import uuid
 from pathlib import Path
 
+
+
+from dataclasses import dataclass
+from typing import Any, Optional
+
+@dataclass
+class BrowserOperationResult:
+    success: bool
+    action: str
+    url: Optional[str] = None
+    content: Optional[Any] = None
+    error: Optional[str] = None
+    verified: bool = False
 
 CDP_HOST = "127.0.0.1"
 CDP_PORT = 9222

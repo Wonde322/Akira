@@ -53,6 +53,112 @@ class MemoryCorruptionError(RuntimeError):
     """Raised when an existing memory file cannot be safely read."""
 
 
+    def should_replace_memory(self, existing, incoming):
+        """Prevent weak or unproven information from overwriting stronger memory."""
+        if existing is None:
+            return True
+
+        old_confidence = (
+            existing.get("confidence", 1.0)
+            if isinstance(existing, dict)
+            else 1.0
+        )
+        new_confidence = (
+            incoming.get("confidence", 1.0)
+            if isinstance(incoming, dict)
+            else 1.0
+        )
+
+        return new_confidence >= old_confidence
+
+    def record_with_provenance(
+        self,
+        key,
+        value,
+        source="conversation",
+        confidence=1.0,
+        metadata=None,
+    ):
+        """Store memory together with its origin and confidence."""
+        from datetime import datetime, timezone
+
+        entry = {
+            "value": value,
+            "source": source,
+            "confidence": confidence,
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+            "metadata": metadata or {},
+        }
+
+        existing = None
+
+        if hasattr(self, "get"):
+            try:
+                existing = self.get(key)
+            except Exception:
+                existing = None
+
+        if not self.should_replace_memory(existing, entry):
+            return {
+                "success": False,
+                "reason": "existing_memory_has_higher_confidence",
+                "key": key,
+            }
+
+        # Используем существующий API хранилища.
+        if hasattr(self, "set"):
+            self.set(key, entry)
+        elif hasattr(self, "add"):
+            self.add(key, entry)
+        elif hasattr(self, "save"):
+            self.save(key, entry)
+        else:
+            return {
+                "success": False,
+                "error": "Memory storage has no supported write method",
+            }
+
+        return {
+            "success": True,
+            "key": key,
+            "entry": entry,
+        }
+
+    def get_memory_provenance(self, key):
+        """Return stored value together with provenance metadata."""
+        if not hasattr(self, "get"):
+            return {
+                "success": False,
+                "error": "Memory storage has no get method",
+            }
+
+        entry = self.get(key)
+
+        if entry is None:
+            return {
+                "success": False,
+                "error": f"Unknown memory: {key}",
+            }
+
+        if isinstance(entry, dict):
+            return {
+                "success": True,
+                "key": key,
+                "value": entry.get("value"),
+                "source": entry.get("source"),
+                "confidence": entry.get("confidence"),
+                "recorded_at": entry.get("recorded_at"),
+                "metadata": entry.get("metadata", {}),
+            }
+
+        return {
+            "success": True,
+            "key": key,
+            "value": entry,
+            "source": "legacy",
+        }
+
+
 def _empty_memory():
     return {
         "goals": [],

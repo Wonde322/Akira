@@ -188,3 +188,42 @@ class VoiceEngine(QObject):
             self.error.emit("Не удалось распознать речь."); print("Whisper error:", error); return ""
         if _is_hallucination(text): return ""
         return text
+
+
+    def get_voice_state(self):
+        """Return current voice lifecycle state."""
+        return getattr(self, "_voice_state", "idle")
+
+    def set_voice_state(self, state):
+        """Move voice runtime into a known lifecycle state."""
+        allowed = {
+            "idle",
+            "listening",
+            "thinking",
+            "speaking",
+        }
+
+        if state not in allowed:
+            raise ValueError(f"Unknown voice state: {state}")
+
+        previous = getattr(self, "_voice_state", "idle")
+        self._voice_state = state
+
+        return {
+            "previous": previous,
+            "current": state,
+        }
+
+    def restore_voice_idle(self):
+        """Always leave the voice runtime in a restart-safe idle state."""
+        previous = getattr(self, "_voice_state", "idle")
+
+        self._voice_state = "idle"
+
+        if hasattr(self, "_dialogue_active"):
+            self._dialogue_active = False
+
+        return {
+            "previous": previous,
+            "current": "idle",
+        }

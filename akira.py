@@ -1,18 +1,84 @@
-from brain import ask
+\
+"""
+Final public Akira application facade.
+
+This file does not duplicate the runtime.
+It owns the application-level composition only.
+"""
 
 
-print("Акира запущен.")
+class Akira:
 
-while True:
-    command = input("Ты: ").strip()
+    def __init__(self, runtime=None, daemon=None):
+        if runtime is None:
+            from akira_runtime import AkiraRuntime
+            runtime = AkiraRuntime()
 
-    if command.lower() in ["выход", "exit", "quit"]:
-        print("Акира: До встречи.")
-        break
+        self.runtime = runtime
+        self._daemon = daemon
 
-    try:
-        response = ask(command, session_id="cli")
-        print("Акира: " + response)
+    def start(self, background=False):
+        if self._daemon is None:
+            from akira_daemon import AkiraDaemon
 
-    except Exception as error:
-        print("Акира: Произошла ошибка: " + str(error))
+            self._daemon = AkiraDaemon(
+                runtime=self.runtime,
+            )
+
+        return self._daemon.start(
+            background=background,
+        )
+
+    def stop(self):
+        if self._daemon is None:
+            return {
+                "status": "stopped",
+            }
+
+        return self._daemon.stop()
+
+    def status(self):
+        if self._daemon is None:
+            return {
+                "status": "created",
+            }
+
+        return self._daemon.status()
+
+    def ask(
+        self,
+        text=None,
+        voice_text=None,
+        observation=None,
+        metadata=None,
+        source=None,
+    ):
+        return self.runtime.run(
+            text=text,
+            voice_text=voice_text,
+            observation=observation,
+            metadata=metadata,
+            source=source,
+        )
+
+    def computer_task(
+        self,
+        goal,
+        observer,
+        executor=None,
+        decider=None,
+        verifier=None,
+        max_iterations=20,
+    ):
+        return self.runtime.run_computer_task(
+            goal=goal,
+            observer=observer,
+            executor=executor,
+            decider=decider,
+            verifier=verifier,
+            max_iterations=max_iterations,
+        )
+
+
+def create_akira(runtime=None):
+    return Akira(runtime=runtime)

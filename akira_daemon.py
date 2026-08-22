@@ -1,163 +1,223 @@
-"""Always-on runtime for Akira."""
-from __future__ import annotations
+\
+"""
+Persistent lifecycle host for Akira.
 
-import signal
-import threading
-from datetime import datetime
+The daemon owns the runtime lifetime.
+It does not create a second agent runtime.
+"""
 
-HEARTBEAT_INTERVAL = 15.0
+from dataclasses import dataclass, field
+from threading import Event, Thread
+from typing import Any
+import time
+
+
+LIFECYCLE_STATES = {
+    "created",
+    "starting",
+    "running",
+    "stopping",
+    "stopped",
+    "failed",
+}
+
+
+@dataclass
+class DaemonState:
+    status: str = "created"
+    started_at: float | None = None
+    stopped_at: float | None = None
+    last_error: str | None = None
+    cycles: int = 0
+    metadata: dict = field(default_factory=dict)
+
+    def to_dict(self):
+        return {
+            "status": self.status,
+            "started_at": self.started_at,
+            "stopped_at": self.stopped_at,
+            "last_error": self.last_error,
+            "cycles": self.cycles,
+            "metadata": self.metadata,
+        }
 
 
 class AkiraDaemon:
-    """Long-lived Akira infrastructure process."""
+    """
+    Persistent host for one AkiraRuntime instance.
 
-    def __init__(self, heartbeat_interval=HEARTBEAT_INTERVAL):
-        self.heartbeat_interval = float(heartbeat_interval)
-        self._stop_event = threading.Event()
-        self._started = False
-        self._heartbeat_count = 0
-        self._last_heartbeat = None
-        self._runtime = None
-        self._scheduler = None
-        self._event_bus = None
-        self._awareness = None
-        self._task_watchdog = None
+    Background work is opt-in: the daemon itself does not force
+    proactive actions or notifications.
+    """
 
-    def start(self):
-        if self._started:
-            return {"success": True, "started": False, "output": "Akira daemon уже запущен."}
-        self._install_signal_handlers()
-        from task_runtime import get_runtime
-        from scheduler import get_scheduler
-        from event_bus import get_event_bus
-        from awareness import get_awareness
-        from task_watchdog import get_task_watchdog
-        self._runtime = get_runtime()
-        self._scheduler = get_scheduler()
-        self._event_bus = get_event_bus()
-        self._awareness = get_awareness()
-        self._task_watchdog = get_task_watchdog()
-        self._started = True
-        self._heartbeat()
-        return {"success": True, "started": True, "heartbeat_interval": self.heartbeat_interval,
-                "output": "Akira daemon запущен."}
-
-    def stop(self):
-        if not self._started:
-            return {"success": True, "stopped": False, "output": "Akira daemon не был запущен."}
-        self._stop_event.set()
-        self._started = False
-        return {"success": True, "stopped": True, "output": "Akira daemon остановлен."}
-
-    def run(self):
-        result = self.start()
-        if not result.get("success"):
-            return result
-        print("Akira daemon: RUNNING")
-        try:
-            while not self._stop_event.wait(self.heartbeat_interval):
-                self._heartbeat()
-        finally:
-            self.stop()
-        print("Akira daemon: STOPPED")
-        return {"success": True, "output": "Akira daemon завершил работу."}
-
-    def _heartbeat(self):
-        self._heartbeat_count += 1
-        self._last_heartbeat = datetime.now().isoformat(timespec="seconds")
-        self._maintain_runtime()
-        self._tick_scheduler()
-        self._maintain_event_bus()
-        self._sample_awareness()
-
-    def _maintain_runtime(self):
-        runtime = self._runtime
+    def __init__(
+        self,
+        runtime=None,
+        heartbeat_interval=5.0,
+    ):
         if runtime is None:
-            return
+            from akira_runtime import AkiraRuntime
+            runtime = AkiraRuntime()
+
+        self.runtime = runtime
+        self.heartbeat_interval = heartbeat_interval
+        self.state = DaemonState()
+
+        self._stop_event = Event()
+        self._thread = None
+
+    @property
+    def running(self):
+        return self.state.status == "running"
+
+    def status(self):
+        data = self.state.to_dict()
+        data["runtime"] = (
+            self.runtime.status()
+            if hasattr(self.runtime, "status")
+            else None
+        )
+        return data
+
+    def start(self, background=False):
+        if self.running:
+            return self.status()
+
+        if self.state.status == "stopping":
+            raise RuntimeError(
+                "Cannot start daemon while it is stopping"
+            )
+
+        self.state.status = "starting"
+        self.state.started_at = time.time()
+        self.state.stopped_at = None
+        self.state.last_error = None
+        self._stop_event.clear()
+
         try:
-            runtime.list_tasks(limit=1)
-        except Exception as error:
-            print("[Akira daemon] runtime health error:", error)
-        watchdog = self._task_watchdog
-        if watchdog is not None:
-            try:
-                result = watchdog.scan()
-                if result.get("stalled") or result.get("interrupted"):
-                    print("[Akira daemon] task watchdog:", result)
-            except Exception as error:
-                print("[Akira daemon] task watchdog error:", error)
+            self.state.status = "running"
 
-    def _tick_scheduler(self):
-        if self._scheduler is None:
-            return
+            if background:
+                self._thread = Thread(
+                    target=self._heartbeat_loop,
+                    name="AkiraDaemon",
+                    daemon=True,
+                )
+                self._thread.start()
+
+            return self.status()
+
+        except Exception as exc:
+            self.state.status = "failed"
+            self.state.last_error = str(exc)
+            raise
+
+    def _heartbeat_loop(self):
+        while not self._stop_event.is_set():
+            self.tick()
+
+            self._stop_event.wait(
+                self.heartbeat_interval
+            )
+
+    def tick(self):
+        if not self.running:
+            return []
+
+        self.state.cycles += 1
+
         try:
-            result = self._scheduler.tick()
-            launched = result.get("launched", [])
-            if launched:
-                print("[Akira daemon] scheduled tasks launched:", launched)
-        except Exception as error:
-            print("[Akira daemon] scheduler error:", error)
+            heartbeat = getattr(
+                self.runtime,
+                "heartbeat_tick",
+                None,
+            )
 
-    def _maintain_event_bus(self):
-        if self._event_bus is None:
-            return
-        try:
-            self._event_bus.list_triggers(limit=1)
-        except Exception as error:
-            print("[Akira daemon] event bus error:", error)
+            if callable(heartbeat):
+                result = heartbeat()
+                return (
+                    result
+                    if result is not None
+                    else []
+                )
 
-    def _sample_awareness(self):
-        if self._awareness is None:
-            return
-        try:
-            result = self._awareness.sample()
-            if result.get("changed"):
-                print("[Akira daemon] desktop state changed.")
-        except Exception as error:
-            print("[Akira daemon] awareness error:", error)
+            return []
 
-    def health(self):
-        runtime = self._runtime
-        runtime_ok = False
-        task_count = 0
-        active_count = 0
-        if runtime is not None:
-            try:
-                with runtime._lock:
-                    task_count = len(runtime._tasks)
-                    active_count = runtime._active_count()
-                runtime_ok = True
-            except Exception:
-                runtime_ok = False
-        return {"success": True, "running": self._started, "heartbeat_count": self._heartbeat_count,
-                "last_heartbeat": self._last_heartbeat, "heartbeat_interval": self.heartbeat_interval,
-                "runtime": {"ok": runtime_ok, "task_count": task_count, "active_tasks": active_count},
-                "timestamp": datetime.now().isoformat(timespec="seconds")}
+        except Exception as exc:
+            self.state.last_error = str(exc)
 
-    def _install_signal_handlers(self):
-        def handle_signal(signum, frame):
-            print(f"\n[Akira daemon] signal {signum}; stopping...")
-            self.stop()
-        signal.signal(signal.SIGINT, handle_signal)
-        signal.signal(signal.SIGTERM, handle_signal)
+            return [{
+                "success": False,
+                "error": str(exc),
+                "source": "heartbeat",
+            }]
+
+    def handle(
+        self,
+        text=None,
+        voice_text=None,
+        observation=None,
+        metadata=None,
+    ):
+        if not self.running:
+            self.start(background=False)
+
+        return self.runtime.handle(
+            text=text,
+            voice_text=voice_text,
+            observation=observation,
+            metadata=metadata,
+        )
+
+    def run_agent_loop(
+        self,
+        goal,
+        observer=None,
+        executor=None,
+        max_iterations=20,
+    ):
+        if not self.running:
+            self.start(background=False)
+
+        return self.runtime.run_agent_loop(
+            goal=goal,
+            observer=observer,
+            executor=executor,
+            max_iterations=max_iterations,
+        )
+
+    def stop(self, timeout=5.0):
+        if self.state.status in {
+            "created",
+            "stopped",
+        }:
+            self.state.status = "stopped"
+            self.state.stopped_at = time.time()
+            return self.status()
+
+        self.state.status = "stopping"
+        self._stop_event.set()
+
+        thread = self._thread
+
+        if (
+            thread is not None
+            and thread.is_alive()
+        ):
+            thread.join(timeout=timeout)
+
+        self._thread = None
+        self.state.status = "stopped"
+        self.state.stopped_at = time.time()
+
+        return self.status()
 
 
-_daemon = None
-_daemon_lock = threading.Lock()
-
-
-def get_daemon():
-    global _daemon
-    if _daemon is None:
-        with _daemon_lock:
-            if _daemon is None:
-                _daemon = AkiraDaemon()
-    return _daemon
-
-
-def daemon_health():
-    return get_daemon().health()
-
-
-if __name__ == "__main__":
-    get_daemon().run()
+def create_daemon(
+    runtime=None,
+    heartbeat_interval=5.0,
+):
+    return AkiraDaemon(
+        runtime=runtime,
+        heartbeat_interval=heartbeat_interval,
+    )

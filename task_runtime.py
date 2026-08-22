@@ -82,7 +82,6 @@ class TaskRuntime:
         if failed_task is not None:
             self._emit("task.failed",self._event_payload(failed_task,error=failed_task.get("error")),task=failed_task)
             return {"success":False,"error":"task_submit_failed","task_id":task_id,"status":"failed","output":f"Не удалось запустить background task: {failed_task.get('error')}"}
-        self._emit("task.started",self._event_payload(task),task=task)
         return {"success":True,"task_id":task_id,"status":task.get("status","running"),"goal":goal,"output":f"Background task {task_id} запущен."}
     def cancel(self,task_id,reason="Cancelled by user"):
         task_id=str(task_id); emit_task=None
@@ -162,6 +161,279 @@ class TaskRuntime:
         if status=="completed":return {"success":True,"ready":True,"task_id":task_id,"result":task.get("result"),"output":str(task.get("result") or "")}
         if status in _TERMINAL_STATUSES:return {"success":False,"ready":True,"task_id":task_id,"error":task.get("error"),"status":status,"output":f"Background task {status}: {task.get('error') or ''}"}
         return {"success":True,"ready":False,"task_id":task_id,"status":status,"output":f"Task {task_id} ещё выполняется."}
+
+
+    def pause_task(self, task_id):
+        """Pause a task without losing its persisted state."""
+        task = self.tasks.get(task_id)
+
+        if task is None:
+            return {
+                "success": False,
+                "error": f"Unknown task: {task_id}",
+            }
+
+        if task.get("status") != "running":
+            return {
+                "success": False,
+                "error": (
+                    f"Cannot pause task in status: "
+                    f"{task.get('status')}"
+                ),
+            }
+
+        task["status"] = "paused"
+        task["paused"] = True
+
+        if hasattr(self, "_save"):
+            self._save()
+
+        return {
+            "success": True,
+            "task_id": task_id,
+            "status": "paused",
+        }
+
+    def resume_task(self, task_id):
+        """Resume a previously paused task."""
+        task = self.tasks.get(task_id)
+
+        if task is None:
+            return {
+                "success": False,
+                "error": f"Unknown task: {task_id}",
+            }
+
+        if task.get("status") != "paused":
+            return {
+                "success": False,
+                "error": (
+                    f"Cannot resume task in status: "
+                    f"{task.get('status')}"
+                ),
+            }
+
+        task["status"] = "running"
+        task["paused"] = False
+
+        if hasattr(self, "_save"):
+            self._save()
+
+        return {
+            "success": True,
+            "task_id": task_id,
+            "status": "running",
+        }
+
+    def recover_incomplete_tasks(self):
+        """Mark interrupted running tasks as paused after restart."""
+        recoverable = []
+
+        for task_id, task in self.tasks.items():
+            status = task.get("status")
+
+            if status not in {"running", "paused"}:
+                continue
+
+            if status == "running":
+                task["status"] = "paused"
+                task["interrupted"] = True
+
+            recoverable.append({
+                "task_id": task_id,
+                "goal": (
+                    task.get("goal")
+                    or task.get("description")
+                    or task.get("task")
+                ),
+                "status": task.get("status"),
+            })
+
+        if hasattr(self, "_save"):
+            self._save()
+
+        return recoverable
+
+
+    def add_task_artifact(
+        self,
+        task_id,
+        artifact,
+        artifact_type="result",
+        name=None,
+    ):
+        """Attach a durable artifact to an existing task."""
+        task = self.tasks.get(task_id)
+
+        if task is None:
+            return {
+                "success": False,
+                "error": f"Unknown task: {task_id}",
+            }
+
+        artifacts = task.setdefault("artifacts", [])
+
+        entry = {
+            "type": artifact_type,
+            "value": artifact,
+        }
+
+        if name is not None:
+            entry["name"] = name
+
+        artifacts.append(entry)
+
+        if hasattr(self, "_save"):
+            self._save()
+
+        return {
+            "success": True,
+            "task_id": task_id,
+            "artifact": entry,
+        }
+
+    def get_task_artifacts(self, task_id):
+        """Return all durable artifacts attached to a task."""
+        task = self.tasks.get(task_id)
+
+        if task is None:
+            return {
+                "success": False,
+                "error": f"Unknown task: {task_id}",
+            }
+
+        return {
+            "success": True,
+            "task_id": task_id,
+            "artifacts": list(task.get("artifacts", [])),
+        }
+
+    def set_task_result(self, task_id, result):
+        """Persist the primary result of a task."""
+        task = self.tasks.get(task_id)
+
+        if task is None:
+            return {
+                "success": False,
+                "error": f"Unknown task: {task_id}",
+            }
+
+        task["result"] = result
+
+        if hasattr(self, "_save"):
+            self._save()
+
+        return {
+            "success": True,
+            "task_id": task_id,
+            "result": result,
+        }
+
+
+    def get_task_context(self, task_id):
+        """Return durable context for continuing a task."""
+        task = self.tasks.get(task_id)
+
+        if task is None:
+            return {
+                "success": False,
+                "error": f"Unknown task: {task_id}",
+            }
+
+        return {
+            "success": True,
+            "task_id": task_id,
+            "goal": (
+                task.get("goal")
+                or task.get("description")
+                or task.get("task")
+            ),
+            "status": task.get("status"),
+            "result": task.get("result"),
+            "artifacts": list(task.get("artifacts", [])),
+            "parent_task_id": task.get("parent_task_id"),
+            "interrupted": task.get("interrupted", False),
+        }
+
+    def find_related_task(self, text=None, task_id=None):
+        """Find an explicit parent task or the most recent unfinished task."""
+        if task_id:
+            task = self.tasks.get(task_id)
+            if task is not None:
+                return {
+                    "success": True,
+                    "task_id": task_id,
+                    "match": "explicit",
+                }
+
+        candidates = []
+
+        for candidate_id, task in self.tasks.items():
+            if task.get("status") in {"completed", "failed", "cancelled"}:
+                continue
+
+            goal = (
+                task.get("goal")
+                or task.get("description")
+                or task.get("task")
+                or ""
+            )
+
+            score = 0
+
+            if text and isinstance(text, str):
+                words = {
+                    word.lower()
+                    for word in text.split()
+                    if len(word) > 2
+                }
+                goal_words = {
+                    word.lower()
+                    for word in str(goal).split()
+                    if len(word) > 2
+                }
+                score = len(words & goal_words)
+
+            candidates.append((score, candidate_id, task))
+
+        if not candidates:
+            return {
+                "success": False,
+                "reason": "no_related_task",
+            }
+
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        score, candidate_id, _ = candidates[0]
+
+        return {
+            "success": True,
+            "task_id": candidate_id,
+            "match": "semantic" if score else "active",
+            "score": score,
+        }
+
+    def build_continuation_context(self, text=None, task_id=None):
+        """Build context for a request that may continue previous work."""
+        related = self.find_related_task(
+            text=text,
+            task_id=task_id,
+        )
+
+        if not related.get("success"):
+            return {
+                "success": True,
+                "continuation": False,
+                "context": None,
+            }
+
+        context = self.get_task_context(related["task_id"])
+
+        return {
+            "success": True,
+            "continuation": True,
+            "match": related.get("match"),
+            "context": context,
+        }
 _runtime=None;_runtime_lock=threading.Lock()
 def get_runtime():
  global _runtime

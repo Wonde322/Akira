@@ -111,6 +111,101 @@ class GUIBackend:
         return None
 
 
+
+
+    def get_frontmost_app(self):
+        """Return currently frontmost macOS application."""
+        script = (
+            'tell application "System Events" '
+            'to get name of first application process whose frontmost is true'
+        )
+        try:
+            result = subprocess.run(
+                ["osascript", "-e", script],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                return result.stdout.strip() or None
+        except Exception:
+            pass
+        return None
+
+    def activate_app(self, app_name):
+        """Launch/activate an app and verify focus."""
+        if not isinstance(app_name, str) or not app_name.strip():
+            return {
+                "success": False,
+                "error": "app_name is required",
+            }
+
+        try:
+            result = subprocess.run(
+                ["open", "-a", app_name],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except Exception as exc:
+            return {
+                "success": False,
+                "error": str(exc),
+            }
+
+        if result.returncode != 0:
+            return {
+                "success": False,
+                "error": result.stderr.strip()
+                or f"Could not activate {app_name}",
+            }
+
+        deadline = time.time() + 5
+
+        while time.time() < deadline:
+            frontmost = self.get_frontmost_app()
+
+            if frontmost and (
+                frontmost.casefold() == app_name.casefold()
+                or app_name.casefold() in frontmost.casefold()
+            ):
+                return {
+                    "success": True,
+                    "app": frontmost,
+                    "focused": True,
+                }
+
+            time.sleep(0.1)
+
+        return {
+            "success": False,
+            "app": app_name,
+            "focused": False,
+            "frontmost": self.get_frontmost_app(),
+            "error": "Application did not become frontmost",
+        }
+
+    def ensure_app_focus(self, app_name):
+        """Recover application focus before keyboard/mouse actions."""
+        frontmost = self.get_frontmost_app()
+
+        if frontmost and (
+            frontmost.casefold() == app_name.casefold()
+            or app_name.casefold() in frontmost.casefold()
+        ):
+            return {
+                "success": True,
+                "app": frontmost,
+                "focused": True,
+                "recovered": False,
+            }
+
+        result = self.activate_app(app_name)
+
+        if result.get("success"):
+            result["recovered"] = True
+
+        return result
 class MacOSBackend(GUIBackend):
     """Реальный бэкенд macOS: Quartz + System Events."""
 

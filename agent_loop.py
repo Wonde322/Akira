@@ -1446,3 +1446,162 @@ def ask(message, session_id=None):
     session.trim()
 
     return answer
+
+
+# ============================================================
+# Computer-use verification state
+# ============================================================
+
+class ComputerUseState:
+    """Tracks whether the screen has changed since the last action."""
+
+    def __init__(self):
+        self.action_since_observe = False
+        self.last_observation = None
+        self.last_action = None
+        self.recovery_count = 0
+
+    def observed(self, observation):
+        self.last_observation = observation
+        self.action_since_observe = False
+        return observation
+
+    def acted(self, action):
+        self.last_action = action
+        self.action_since_observe = True
+
+    def can_finish(self):
+        return not self.action_since_observe
+
+    def needs_verification(self):
+        return self.action_since_observe
+
+    def recovery(self):
+        self.recovery_count += 1
+        return self.recovery_count
+
+
+class TaskPlanState:
+    """Runtime state for an existing task plan."""
+
+    def __init__(self):
+        self.plan = None
+        self.current_step = None
+        self.completed_steps = []
+        self.failed_steps = []
+
+    def set_plan(self, plan):
+        self.plan = plan
+        self.current_step = 0
+        return plan
+
+    def complete_current_step(self):
+        if self.current_step is None:
+            return None
+
+        step = self.current_step
+        self.completed_steps.append(step)
+        self.current_step += 1
+        return step
+
+    def fail_current_step(self, error=None):
+        if self.current_step is None:
+            return None
+
+        step = {
+            "index": self.current_step,
+            "error": error,
+        }
+
+        self.failed_steps.append(step)
+        return step
+
+    def needs_replan(self):
+        return bool(self.failed_steps)
+
+    def is_complete(self):
+        if self.plan is None:
+            return False
+
+        steps = (
+            self.plan.get("steps", [])
+            if isinstance(self.plan, dict)
+            else []
+        )
+
+        return self.current_step is not None and self.current_step >= len(steps)
+
+
+class RecoveryState:
+    """Tracks failed attempts and prevents blind repetition."""
+
+    def __init__(self, max_retries=3):
+        self.max_retries = max_retries
+        self.attempts = []
+        self.failed_signatures = set()
+
+    def _signature(self, action, arguments=None):
+        arguments = arguments or {}
+        if isinstance(arguments, dict):
+            items = tuple(sorted(
+                (str(k), repr(v)) for k, v in arguments.items()
+            ))
+        else:
+            items = repr(arguments)
+        return (str(action), items)
+
+    def record_success(self, action, arguments=None):
+        self.attempts.append({
+            "action": action,
+            "arguments": arguments or {},
+            "success": True,
+        })
+
+    def record_failure(self, action, arguments=None, error=None):
+        signature = self._signature(action, arguments)
+
+        self.failed_signatures.add(signature)
+        self.attempts.append({
+            "action": action,
+            "arguments": arguments or {},
+            "error": error,
+            "success": False,
+        })
+
+    def should_retry(self):
+        failures = sum(
+            1 for attempt in self.attempts
+            if not attempt["success"]
+        )
+        return failures < self.max_retries
+
+    def is_repeated_failure(self, action, arguments=None):
+        return (
+            self._signature(action, arguments)
+            in self.failed_signatures
+        )
+
+    def recovery_context(self):
+        failed = [
+            {
+                "action": attempt["action"],
+                "arguments": attempt["arguments"],
+                "error": attempt.get("error"),
+            }
+            for attempt in self.attempts
+            if not attempt["success"]
+        ]
+
+        return {
+            "recovery_required": bool(failed),
+            "failed_attempts": failed,
+            "instruction": (
+                "Do not repeat an already failed action with identical "
+                "arguments. Choose a different strategy, tool, target, "
+                "or arguments."
+            ),
+            "retries_remaining": max(
+                0,
+                self.max_retries - len(failed),
+            ),
+        }

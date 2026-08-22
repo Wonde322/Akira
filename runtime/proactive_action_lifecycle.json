@@ -1,0 +1,24 @@
+[
+  {
+    "task_id": "task-1",
+    "goal": "Проверить контекст",
+    "kind": null,
+    "correlation_id": null,
+    "status": "completed",
+    "result": "Готово",
+    "error": null,
+    "started_at": "now",
+    "finished_at": "now"
+  },
+  {
+    "task_id": "task-2",
+    "goal": "Проверить контекст",
+    "kind": null,
+    "correlation_id": null,
+    "status": "failed",
+    "result": null,
+    "error": "boom",
+    "started_at": "now",
+    "finished_at": "now"
+  }
+]

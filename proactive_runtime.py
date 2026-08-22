@@ -182,7 +182,21 @@ class ProactiveRuntime:
         if event_type == "task.failed": return ProactiveDecision(ProactiveAction.NOTIFY, "background_task_failed", notification=self._message_for_failure(payload), priority="high")
         if event_type == "task.completed":
             proactive = self._is_proactive_session(payload)
-            return ProactiveDecision(ProactiveAction.NOTIFY, "proactive_task_completed" if proactive else "background_task_completed", notification=self._message_for_completion(payload))
+            has_result = payload.get("result") not in (None, "")
+
+            if proactive or payload.get("notify") is True or has_result:
+                return ProactiveDecision(
+                    ProactiveAction.NOTIFY,
+                    "proactive_task_completed"
+                    if proactive
+                    else "background_task_completed",
+                    notification=self._message_for_completion(payload),
+                )
+
+            return ProactiveDecision(
+                ProactiveAction.RECORD,
+                "background_task_completed",
+            )
         if event_type == "proactive.question":
             question = str(payload.get("question") or "").strip()
             return ProactiveDecision(ProactiveAction.ASK_USER, "explicit_question", notification=question, priority="high") if question else ProactiveDecision(ProactiveAction.IGNORE, "question_without_text")
@@ -242,3 +256,134 @@ def get_proactive_runtime():
         with _runtime_lock:
             if _runtime is None: _runtime = ProactiveRuntime()
     return _runtime
+
+
+class ProactiveHeartbeat:
+    """
+    Lightweight event heartbeat.
+
+    Не вызывает LLM сам.
+    Только проверяет зарегистрированные источники и возвращает
+    реальные события для существующего ProactiveRuntime.
+    """
+
+    def __init__(self):
+        self.sources = {}
+        self.last_results = {}
+
+    def register_source(self, name, callback):
+        if not isinstance(name, str) or not name:
+            raise ValueError("Heartbeat source name is required")
+
+        if not callable(callback):
+            raise TypeError("Heartbeat source must be callable")
+
+        self.sources[name] = callback
+
+        return {
+            "success": True,
+            "source": name,
+        }
+
+    def unregister_source(self, name):
+        existed = name in self.sources
+        self.sources.pop(name, None)
+        self.last_results.pop(name, None)
+
+        return {
+            "success": True,
+            "removed": existed,
+            "source": name,
+        }
+
+    def tick(self):
+        """Run every source once and return only meaningful events."""
+        events = []
+
+        for name, callback in list(self.sources.items()):
+            try:
+                result = callback()
+            except Exception as exc:
+                result = {
+                    "type": "heartbeat.error",
+                    "source": name,
+                    "error": str(exc),
+                }
+
+            self.last_results[name] = result
+
+            if result is None:
+                continue
+
+            if isinstance(result, dict):
+                if result.get("event") is None and result.get("type") is None:
+                    continue
+
+                payload = dict(result)
+                payload.setdefault("source", name)
+                events.append(payload)
+
+            elif isinstance(result, (list, tuple)):
+                for item in result:
+                    if item is not None:
+                        events.append({
+                            "source": name,
+                            "event": item,
+                        })
+
+            else:
+                events.append({
+                    "source": name,
+                    "event": result,
+                })
+
+        return events
+
+    def run_once(self, runtime=None):
+        """
+        Execute one heartbeat cycle.
+
+        Если передан существующий ProactiveRuntime, события передаются
+        в его публичный event API, если такой API существует.
+        """
+        events = self.tick()
+
+        if runtime is None:
+            return events
+
+        handled = []
+
+        for event in events:
+            event_type = (
+                event.get("type")
+                or event.get("event_type")
+                or event.get("event")
+            )
+
+            payload = event.get("payload")
+
+            if payload is None:
+                payload = {
+                    key: value
+                    for key, value in event.items()
+                    if key not in {"type", "event_type", "event", "source"}
+                }
+
+            for method_name in (
+                "handle_event",
+                "process_event",
+                "decide",
+            ):
+                method = getattr(runtime, method_name, None)
+
+                if callable(method):
+                    try:
+                        handled.append(method(event_type, payload))
+                    except TypeError:
+                        handled.append(method({
+                            "type": event_type,
+                            "payload": payload,
+                        }))
+                    break
+
+        return handled
