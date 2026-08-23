@@ -117,7 +117,6 @@ def shell(command, timeout=None, cwd=None):
     }
 
     if outcome["exit_code"] != 0:
-        detail = stderr or stdout or "Команда завершилась с ненулевым кодом выхода."
-        return fail("nonzero_exit", detail, **metadata, exit_code=outcome["exit_code"])
+        return fail("nonzero_exit", data, **metadata)
 
     return ok(data, **metadata)
