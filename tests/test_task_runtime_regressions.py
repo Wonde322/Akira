@@ -12,7 +12,7 @@ def _runtime(monkeypatch, tmp_path):
 
 def test_loaded_active_task_becomes_interrupted(monkeypatch, tmp_path):
     module = _runtime(monkeypatch, tmp_path)
-    module.TASK_FILE.parent.mkdir(parents=True)
+    module.TASK_FILE.parent.mkdir(parents=True, exist_ok=True)
     module.TASK_FILE.write_text(json.dumps([{"id": "t1", "goal": "work", "status": "running"}]), encoding="utf-8")
     runtime = module.TaskRuntime(max_workers=1)
     assert runtime.status("t1")["task"]["status"] == "interrupted"
