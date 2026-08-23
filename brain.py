@@ -1,7 +1,8 @@
-"""Direct desktop command router.
+"""Direct desktop command router with typed session context.
 
-This module intentionally executes desktop commands itself instead of passing
-partially parsed actions into the legacy agent loop.
+No agent-loop state is used for short follow-up commands. Context records what the
+last operation *was*, so words such as "дальше" and "выключи" resolve by action
+kind instead of replaying raw text.
 """
 from __future__ import annotations
 
@@ -14,13 +15,11 @@ APPS = {
     "дискорду": "Discord", "дискордом": "Discord",
     "safari": "Safari", "сафари": "Safari",
     "chrome": "Google Chrome", "хром": "Google Chrome", "гугл хром": "Google Chrome",
-    "terminal": "Terminal", "терминал": "Terminal",
-    "finder": "Finder", "файндер": "Finder",
+    "terminal": "Terminal", "терминал": "Terminal", "finder": "Finder", "файндер": "Finder",
 }
 STOP_WORDS = {"стоп", "остановись", "отмена", "отмени", "хватит", "stop", "cancel"}
 MORE_WORDS = {"еще", "ещё", "еще раз", "ещё раз", "повтори", "продолжай", "дальше"}
-_LAST_TARGETS = {}
-_LAST_ACTION = {}
+_CONTEXT = {}
 _ACTION_RE = re.compile(r"(?<!\w)(открой|запусти|закрой|выключи)\s+", re.I)
 
 
@@ -61,29 +60,28 @@ def _app_actions(text):
 def parse(message):
     text = normalize(message)
     if text in STOP_WORDS:
-        return ("stop", None)
+        return "stop", None
     if text in MORE_WORDS:
-        return ("repeat", None)
+        return "more", None
     if text in {"закрой", "выключи"}:
-        return ("close_context", None)
-
+        return "context_stop", None
+    if text in {"следующий", "следующий трек", "скип", "пропусти"}:
+        return "spotify_next", None
     music = re.match(r"^(?:включи|поставь|сыграй)\s+(.+?)\s+(?:на|в)\s+спотифай$", text)
     if music and music.group(1).strip():
-        return ("spotify", music.group(1).strip())
-
+        return "spotify_play", music.group(1).strip()
     actions = _app_actions(text)
     if actions:
-        return ("apps", actions)
-
+        return "apps", actions
     volume = re.search(r"(?:громкость|звук)(?:\s+на)?\s+(\d{1,3})(?:\s*%|\s*процент\w*)?$", text)
     if volume:
-        return ("volume", max(0, min(100, int(volume.group(1)))))
+        return "volume", max(0, min(100, int(volume.group(1))))
     if re.search(r"\b(?:громче|прибавь|увеличь)\b", text):
-        return ("volume_delta", 10)
+        return "volume_delta", 10
     if re.search(r"\b(?:тише|убавь|уменьши)\b", text):
-        return ("volume_delta", -10)
+        return "volume_delta", -10
     if re.search(r"(?:выключи|убери)\s+(?:звук|громкость)", text):
-        return ("volume", 0)
+        return "volume", 0
     return None
 
 
@@ -101,26 +99,25 @@ def _volume(value=None, delta=None):
     return value
 
 
-def _run_apps(actions, session_id):
+def _run_apps(actions):
     from capabilities.apps import open_target, close_target
-    messages = []
-    last_done = []
+    messages, last_done = [], []
     for kind, targets in actions:
         done, failed = [], []
         for target in targets:
             result = open_target(target) if kind == "open" else close_target(target)
+            (done if result.get("success") else failed).append(target if result.get("success") else f"{target}: {result.get('error') or 'не удалось'}")
             if result.get("success"):
-                done.append(target)
                 last_done.append(target)
-            else:
-                failed.append(f"{target}: {result.get('error') or 'не удалось'}")
         if done:
             messages.append(f"{'Открыл' if kind == 'open' else 'Закрыл'}: {', '.join(done)}.")
         if failed:
             messages.append("Не удалось: " + "; ".join(failed))
-    if last_done:
-        _LAST_TARGETS[session_id] = [last_done[-1]]
-    return " ".join(messages) or "Не удалось выполнить действие."
+    return " ".join(messages) or "Не удалось выполнить действие.", last_done
+
+
+def _set_context(session_id, kind, value=None, target=None):
+    _CONTEXT[session_id] = {"kind": kind, "value": value, "target": target}
 
 
 def ask(message, session_id="desktop"):
@@ -128,35 +125,49 @@ def ask(message, session_id="desktop"):
     if command is None:
         import agent_loop
         return agent_loop.ask(message, session_id=session_id)
-
     kind, value = command
+    context = _CONTEXT.get(session_id, {})
     if kind == "stop":
-        _LAST_ACTION.pop(session_id, None)
+        _CONTEXT.pop(session_id, None)
         return "Остановил."
-    if kind == "repeat":
-        previous = _LAST_ACTION.get(session_id)
-        if previous is None:
-            return "Не понимаю, что повторить."
-        kind, value = previous
-    if kind == "close_context":
-        targets = _LAST_TARGETS.get(session_id, [])
-        if not targets:
-            return "Не понимаю, что закрыть."
-        kind, value = "apps", [("close", targets)]
-
-    if kind == "spotify":
+    if kind == "more":
+        if context.get("kind") == "spotify_play":
+            from spotify_control import next_track
+            return next_track()
+        if context.get("kind") == "volume_delta":
+            value, kind = context.get("value", 10), "volume_delta"
+        else:
+            return "Не понимаю, что продолжить."
+    if kind == "context_stop":
+        if context.get("kind") == "spotify_play":
+            from spotify_control import pause
+            return pause()
+        if context.get("kind") == "apps" and context.get("target"):
+            kind, value = "apps", [("close", [context["target"]])]
+        else:
+            return "Не понимаю, что выключить."
+    if kind == "spotify_play":
         from spotify_control import play
-        _LAST_TARGETS[session_id] = ["Spotify"]
-        _LAST_ACTION[session_id] = (kind, value)
-        return play(value)
+        result = play(value)
+        _set_context(session_id, "spotify_play", value, "Spotify")
+        return result
+    if kind == "spotify_next":
+        from spotify_control import next_track
+        result = next_track()
+        _set_context(session_id, "spotify_play", context.get("value"), "Spotify")
+        return result
     if kind == "apps":
-        _LAST_ACTION[session_id] = (kind, value)
-        return _run_apps(value, session_id)
+        result, done = _run_apps(value)
+        if done:
+            _set_context(session_id, "apps", value, done[-1])
+        return result
     if kind == "volume":
-        _LAST_ACTION[session_id] = (kind, value)
-        return f"Громкость: {_volume(value=value)}%"
-    _LAST_ACTION[session_id] = (kind, value)
-    return f"Громкость: {_volume(delta=value)}%"
+        result = f"Громкость: {_volume(value=value)}%"
+        _set_context(session_id, "volume", value)
+        return result
+    result = f"Громкость: {_volume(delta=value)}%"
+    _set_context(session_id, "volume_delta", value)
+    return result
 
 
 def get_session(session_id="desktop"):
