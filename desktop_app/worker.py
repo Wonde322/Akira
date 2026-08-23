@@ -1,7 +1,7 @@
-"""Latest-command desktop worker.
+"""Desktop request worker.
 
-Commands are never queued. Each execution runs independently so a new command or
-`stop` is accepted immediately; results from superseded executions are discarded.
+Only the newest request is allowed to publish a result.  The worker does not
+classify requests, invent status messages, or turn conversation into actions.
 """
 from __future__ import annotations
 
@@ -22,95 +22,83 @@ class BrainWorker(QThread):
     def __init__(self, session_id="desktop", parent=None):
         super().__init__(parent)
         self.session_id = session_id
-        self._wake = threading.Event()
-        self._stop = threading.Event()
         self._lock = threading.Lock()
-        self._generation = 0
-        self._message = ""
-        self._active_generation = None
+        self._wake = threading.Event()
+        self._shutdown = threading.Event()
+        self._request_id = 0
+        self._pending = None
 
     @staticmethod
     def _is_stop(message):
-        return str(message or "").strip().casefold().strip(".!?,:;") in _STOP_WORDS
+        return str(message or "").strip().casefold().strip(" .,!?:;") in _STOP_WORDS
 
     def submit(self, message):
         message = str(message or "").strip()
         if not message:
             return
+        is_stop = self._is_stop(message)
         with self._lock:
-            self._generation += 1
-            generation = self._generation
-            self._message = "" if self._is_stop(message) else message
-            self._active_generation = None if self._is_stop(message) else generation
+            self._request_id += 1
+            request_id = self._request_id
+            self._pending = None if is_stop else (request_id, message)
             self._wake.set()
-        if self._is_stop(message):
+        if is_stop:
             self.busy.emit(False)
             self.answer_ready.emit("Остановил.")
-        else:
-            self.acknowledged.emit(message)
+            return
         if not self.isRunning():
             self.start()
 
-    def request_stop(self):
-        with self._lock:
-            self._generation += 1
-            self._message = ""
-            self._active_generation = None
-            self._stop.set()
-            self._wake.set()
-        self.busy.emit(False)
-
     def cancel_current(self):
         with self._lock:
-            self._generation += 1
-            self._message = ""
-            self._active_generation = None
+            self._request_id += 1
+            self._pending = None
             self._wake.set()
         self.busy.emit(False)
         return True
 
-    def _take(self):
+    def request_stop(self):
+        self.cancel_current()
+
+    def _take_latest(self):
         with self._lock:
-            generation = self._generation
-            message = self._message
-            self._message = ""
+            item = self._pending
+            self._pending = None
             self._wake.clear()
-        return generation, message
+            return item
 
-    def _current(self, generation):
+    def _is_current(self, request_id):
         with self._lock:
-            return generation == self._generation and not self._stop.is_set()
+            return request_id == self._request_id
 
-    def _execute(self, generation, message):
+    def _run_request(self, request_id, message):
         try:
             from brain import ask
             answer = ask(message, session_id=self.session_id)
-            if self._current(generation):
-                self.answer_ready.emit(str(answer or "Готово."))
         except Exception:
             traceback.print_exc()
-            if self._current(generation):
-                self.error.emit("Не удалось выполнить действие.")
-        finally:
-            if self._current(generation):
-                with self._lock:
-                    if self._active_generation == generation:
-                        self._active_generation = None
-                self.busy.emit(False)
+            if self._is_current(request_id):
+                self.error.emit("Не удалось выполнить запрос.")
+            return
+        if self._is_current(request_id):
+            self.answer_ready.emit(str(answer or "Готово."))
+            self.busy.emit(False)
 
     def run(self):
-        while not self._stop.is_set():
+        while not self._shutdown.is_set():
             self._wake.wait()
-            if self._stop.is_set():
+            if self._shutdown.is_set():
                 break
-            generation, message = self._take()
-            if not message:
+            item = self._take_latest()
+            if item is None:
                 continue
-            if self._current(generation):
-                self.busy.emit(True)
-                threading.Thread(
-                    target=self._execute,
-                    args=(generation, message),
-                    daemon=True,
-                    name=f"AkiraCommand-{generation}",
-                ).start()
+            request_id, message = item
+            if not self._is_current(request_id):
+                continue
+            self.busy.emit(True)
+            threading.Thread(
+                target=self._run_request,
+                args=(request_id, message),
+                daemon=True,
+                name=f"AkiraRequest-{request_id}",
+            ).start()
