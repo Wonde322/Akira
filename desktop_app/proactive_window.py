@@ -12,21 +12,12 @@ from .window import MainWindow
 class ProactiveMainWindow(MainWindow):
     _WAKE_WORDS = {"акира", "akira"}
     _INTERNAL_OUTPUT_KEYS = {"status", "evidence", "success", "error", "output", "data", "verification"}
-    _LEGACY_TEST_MESSAGES = {
-        "готово: проверить контекст",
-        "готово: x",
-        "ok",
-    }
-    _INTERNAL_TEXT = (
-        "проверяю контекст",
-        "проверка контекста",
-        "проверить контекст",
-        "checking context",
-        "checking current context",
-    )
+    _LEGACY_TEST_MESSAGES = {"готово: проверить контекст", "готово: x", "ok"}
+    _INTERNAL_TEXT = {"проверяю контекст", "проверка контекста", "checking context", "checking current context"}
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.worker.acknowledged.connect(self._on_command_acknowledged)
         self.proactive_surface = ProactiveDesktopBridge(parent=self)
         self.proactive_surface.notification.connect(self._on_proactive_notification)
         self.proactive_surface.question.connect(self._on_proactive_question)
@@ -36,20 +27,14 @@ class ProactiveMainWindow(MainWindow):
     def _is_wake_only(cls, text):
         if not isinstance(text, str):
             return False
-        match = re.fullmatch(
-            r"\s*(?:[^\w\s]*\s*)*([A-Za-zА-Яа-яЁё]+)(?:\s*[^\w\s]*)*\s*",
-            text,
-        )
+        match = re.fullmatch(r"\s*(?:[^\w\s]*\s*)*([A-Za-zА-Яа-яЁё]+)(?:\s*[^\w\s]*)*\s*", text)
         return bool(match and match.group(1).lower() in cls._WAKE_WORDS)
-
-    @classmethod
-    def _is_internal_text(cls, text):
-        normalized = str(text or "").casefold().strip()
-        return any(normalized.startswith(prefix) for prefix in cls._INTERNAL_TEXT)
 
     def _set_state(self, state):
         super()._set_state(state)
-        if state == self.SPEAKING:
+        # The user must always be able to replace a running task. Thinking is
+        # not an input lock and must never disable the microphone/text path.
+        if state in (self.SPEAKING, self.THINKING, self.LISTENING, self.IDLE):
             self.input.setEnabled(True)
 
     def _acknowledge_text_wake(self):
@@ -73,9 +58,8 @@ class ProactiveMainWindow(MainWindow):
 
     @classmethod
     def _is_internal_proactive_payload(cls, text):
-        """Structured tool/observation output is never user-facing chat text."""
         normalized = str(text).casefold().strip()
-        if normalized in cls._LEGACY_TEST_MESSAGES or cls._is_internal_text(normalized):
+        if normalized in cls._LEGACY_TEST_MESSAGES or normalized in cls._INTERNAL_TEXT:
             return True
         try:
             value = json.loads(str(text))
@@ -94,7 +78,9 @@ class ProactiveMainWindow(MainWindow):
 
     def _proactive_text(self, item):
         text = str(item.get("message") or item.get("text") or item.get("title") or "").strip()
-        return "" if not text or self._is_internal_proactive_payload(text) else text
+        if not text or ProactiveMainWindow._is_internal_proactive_payload(text):
+            return ""
+        return text
 
     def _on_proactive_notification(self, item):
         text = self._proactive_text(item)
@@ -124,11 +110,19 @@ class ProactiveMainWindow(MainWindow):
             self._show_error("Не удалось передать ответ Акире.")
         return True
 
+    def _on_command_acknowledged(self, message):
+        # Immediate acknowledgement makes command replacement visible instead
+        # of leaving the user staring at an unresponsive observation/task.
+        self._append_message("Делаю.", "akira")
+        self.status.setText("Выполняю новую команду.")
+        self.status.setStyleSheet("color: #c0c0c8; font-size: 12px; background: transparent;")
+
     def _submit_to_worker(self, message, *, voice=False):
-        """Submit without pausing the microphone while the worker executes."""
         self._append_message(message, "user")
         self._last_voice = bool(voice)
         self.worker.submit(message)
+        # Recording stays armed while the worker or a tool is busy, so a new
+        # voice command can replace the current one.
         self.voice.resume()
         self._set_state(self.THINKING)
 
@@ -138,8 +132,9 @@ class ProactiveMainWindow(MainWindow):
             return
         if self._state == self.SPEAKING:
             self.voice.stop_speaking()
-        if not self._submit_proactive_answer(message):
-            self._submit_to_worker(message, voice=False)
+        if self._submit_proactive_answer(message):
+            return
+        self._submit_to_worker(message, voice=False)
 
     def _on_voice_text(self, text):
         if not text:
@@ -168,9 +163,22 @@ class ProactiveMainWindow(MainWindow):
 
     def _on_activity(self, label):
         text = str(label or "").strip()
-        if self._is_internal_text(text):
+        if text.casefold() in self._INTERNAL_TEXT:
             return
         super()._on_activity(text)
+
+    def _on_mic_clicked(self):
+        # Unlike the old base implementation, THINKING is interruptible: the
+        # mic remains usable and the next recognized command replaces the task.
+        if self._state == self.DISABLED:
+            return
+        if self._state == self.SPEAKING:
+            self.voice.stop_speaking()
+        if self._mic_active:
+            self.voice.cancel_capture()
+            self._set_state(self.IDLE)
+            return
+        self.voice.capture_once()
 
     def closeEvent(self, event):
         self.proactive_surface.stop()
