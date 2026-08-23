@@ -17,12 +17,13 @@ class ProactiveMainWindow(MainWindow):
         "готово: x",
         "ok",
     }
-    _INTERNAL_TEXT = {
+    _INTERNAL_TEXT = (
         "проверяю контекст",
         "проверка контекста",
+        "проверить контекст",
         "checking context",
         "checking current context",
-    }
+    )
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -41,6 +42,11 @@ class ProactiveMainWindow(MainWindow):
         )
         return bool(match and match.group(1).lower() in cls._WAKE_WORDS)
 
+    @classmethod
+    def _is_internal_text(cls, text):
+        normalized = str(text or "").casefold().strip()
+        return any(normalized.startswith(prefix) for prefix in cls._INTERNAL_TEXT)
+
     def _set_state(self, state):
         super()._set_state(state)
         if state == self.SPEAKING:
@@ -51,9 +57,7 @@ class ProactiveMainWindow(MainWindow):
         self.voice.resume()
         self._set_state(self.IDLE)
         self.status.setText("Слушаю.")
-        self.status.setStyleSheet(
-            "color: #c0c0c8; font-size: 12px; background: transparent;"
-        )
+        self.status.setStyleSheet("color: #c0c0c8; font-size: 12px; background: transparent;")
         self.input.setEnabled(True)
         self.input.setFocus()
 
@@ -63,9 +67,7 @@ class ProactiveMainWindow(MainWindow):
         self.voice.resume()
         self._set_state(self.LISTENING)
         self.status.setText("Слушаю.")
-        self.status.setStyleSheet(
-            "color: #c0c0c8; font-size: 12px; background: transparent;"
-        )
+        self.status.setStyleSheet("color: #c0c0c8; font-size: 12px; background: transparent;")
         self.input.setEnabled(True)
         self.input.setFocus()
 
@@ -73,15 +75,13 @@ class ProactiveMainWindow(MainWindow):
     def _is_internal_proactive_payload(cls, text):
         """Structured tool/observation output is never user-facing chat text."""
         normalized = str(text).casefold().strip()
-        if normalized in cls._LEGACY_TEST_MESSAGES or normalized in cls._INTERNAL_TEXT:
+        if normalized in cls._LEGACY_TEST_MESSAGES or cls._is_internal_text(normalized):
             return True
         try:
             value = json.loads(str(text))
         except (TypeError, ValueError, json.JSONDecodeError):
             return False
-        if not isinstance(value, dict):
-            return False
-        return bool(set(value) & cls._INTERNAL_OUTPUT_KEYS)
+        return isinstance(value, dict) and bool(set(value) & cls._INTERNAL_OUTPUT_KEYS)
 
     @classmethod
     def _sanitize_answer(cls, answer):
@@ -93,15 +93,8 @@ class ProactiveMainWindow(MainWindow):
         return text
 
     def _proactive_text(self, item):
-        text = str(
-            item.get("message")
-            or item.get("text")
-            or item.get("title")
-            or ""
-        ).strip()
-        if not text or ProactiveMainWindow._is_internal_proactive_payload(text):
-            return ""
-        return text
+        text = str(item.get("message") or item.get("text") or item.get("title") or "").strip()
+        return "" if not text or self._is_internal_proactive_payload(text) else text
 
     def _on_proactive_notification(self, item):
         text = self._proactive_text(item)
@@ -114,9 +107,7 @@ class ProactiveMainWindow(MainWindow):
             return
         self._append_message(text, "akira")
         self.status.setText("Акира ждёт ответа.")
-        self.status.setStyleSheet(
-            "color: #c0c0c8; font-size: 12px; background: transparent;"
-        )
+        self.status.setStyleSheet("color: #c0c0c8; font-size: 12px; background: transparent;")
         self.input.setEnabled(True)
         self.input.setFocus()
 
@@ -134,13 +125,7 @@ class ProactiveMainWindow(MainWindow):
         return True
 
     def _submit_to_worker(self, message, *, voice=False):
-        """Submit without pausing the microphone.
-
-        VoiceEngine stays armed while the worker is thinking or observing. A
-        new utterance is therefore delivered immediately and BrainWorker's
-        existing priority/cancellation path interrupts the active turn at the
-        next safe execution boundary.
-        """
+        """Submit without pausing the microphone while the worker executes."""
         self._append_message(message, "user")
         self._last_voice = bool(voice)
         self.worker.submit(message)
@@ -153,9 +138,8 @@ class ProactiveMainWindow(MainWindow):
             return
         if self._state == self.SPEAKING:
             self.voice.stop_speaking()
-        if self._submit_proactive_answer(message):
-            return
-        self._submit_to_worker(message, voice=False)
+        if not self._submit_proactive_answer(message):
+            self._submit_to_worker(message, voice=False)
 
     def _on_voice_text(self, text):
         if not text:
@@ -170,7 +154,6 @@ class ProactiveMainWindow(MainWindow):
         self._submit_to_worker(text, voice=True)
 
     def _on_answer(self, answer):
-        """Hide internal evidence and keep voice wake listening between turns."""
         answer = self._sanitize_answer(answer) or "Готово."
         was_voice = self._last_voice
         if was_voice and self.voice.is_dialogue():
@@ -184,10 +167,8 @@ class ProactiveMainWindow(MainWindow):
         self.voice.resume()
 
     def _on_activity(self, label):
-        # Execution activity is status-only. Internal context/observe checks
-        # must never leak into the chat transcript as assistant content.
         text = str(label or "").strip()
-        if text.casefold() in self._INTERNAL_TEXT:
+        if self._is_internal_text(text):
             return
         super()._on_activity(text)
 
