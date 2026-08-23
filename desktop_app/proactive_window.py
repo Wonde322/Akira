@@ -11,11 +11,17 @@ from .window import MainWindow
 
 class ProactiveMainWindow(MainWindow):
     _WAKE_WORDS = {"акира", "akira"}
-    _INTERNAL_OUTPUT_KEYS = {"status", "evidence", "success", "error", "output", "data"}
+    _INTERNAL_OUTPUT_KEYS = {"status", "evidence", "success", "error", "output", "data", "verification"}
     _LEGACY_TEST_MESSAGES = {
         "готово: проверить контекст",
         "готово: x",
         "ok",
+    }
+    _INTERNAL_TEXT = {
+        "проверяю контекст",
+        "проверка контекста",
+        "checking context",
+        "checking current context",
     }
 
     def __init__(self, parent=None):
@@ -66,18 +72,25 @@ class ProactiveMainWindow(MainWindow):
     @classmethod
     def _is_internal_proactive_payload(cls, text):
         """Structured tool/observation output is never user-facing chat text."""
-        normalized = text.casefold().strip()
-        if normalized in cls._LEGACY_TEST_MESSAGES:
-            return True
-        if normalized.startswith("не удалось завершить задачу") and normalized.endswith(": boom"):
+        normalized = str(text).casefold().strip()
+        if normalized in cls._LEGACY_TEST_MESSAGES or normalized in cls._INTERNAL_TEXT:
             return True
         try:
-            value = json.loads(text)
+            value = json.loads(str(text))
         except (TypeError, ValueError, json.JSONDecodeError):
             return False
         if not isinstance(value, dict):
             return False
         return bool(set(value) & cls._INTERNAL_OUTPUT_KEYS)
+
+    @classmethod
+    def _sanitize_answer(cls, answer):
+        text = str(answer or "").strip()
+        if not text:
+            return ""
+        if cls._is_internal_proactive_payload(text):
+            return "Готово."
+        return text
 
     def _proactive_text(self, item):
         text = str(
@@ -114,14 +127,25 @@ class ProactiveMainWindow(MainWindow):
         result = self.proactive_surface.answer(message)
         if result.get("success"):
             self._clear_status()
-            if self.voice.is_dialogue():
-                self._set_state(self.LISTENING)
-                self.voice.resume()
-            else:
-                self._set_state(self.IDLE)
+            self.voice.resume()
+            self._set_state(self.LISTENING if self.voice.is_dialogue() else self.IDLE)
         else:
             self._show_error("Не удалось передать ответ Акире.")
         return True
+
+    def _submit_to_worker(self, message, *, voice=False):
+        """Submit without pausing the microphone.
+
+        VoiceEngine stays armed while the worker is thinking or observing. A
+        new utterance is therefore delivered immediately and BrainWorker's
+        existing priority/cancellation path interrupts the active turn at the
+        next safe execution boundary.
+        """
+        self._append_message(message, "user")
+        self._last_voice = bool(voice)
+        self.worker.submit(message)
+        self.voice.resume()
+        self._set_state(self.THINKING)
 
     def _on_submit(self, message):
         if self._is_wake_only(message):
@@ -131,7 +155,7 @@ class ProactiveMainWindow(MainWindow):
             self.voice.stop_speaking()
         if self._submit_proactive_answer(message):
             return
-        super()._on_submit(message)
+        self._submit_to_worker(message, voice=False)
 
     def _on_voice_text(self, text):
         if not text:
@@ -141,11 +165,13 @@ class ProactiveMainWindow(MainWindow):
             return
         if self._submit_proactive_answer(text):
             self._last_voice = True
+            self.voice.resume()
             return
-        super()._on_voice_text(text)
+        self._submit_to_worker(text, voice=True)
 
     def _on_answer(self, answer):
-        """A completed voice command is one turn: answer, then wake-listening."""
+        """Hide internal evidence and keep voice wake listening between turns."""
+        answer = self._sanitize_answer(answer) or "Готово."
         was_voice = self._last_voice
         if was_voice and self.voice.is_dialogue():
             self.voice.end_turn()
@@ -155,6 +181,15 @@ class ProactiveMainWindow(MainWindow):
         if self._last_voice and self.voice.is_dialogue():
             self.voice.end_turn()
         super()._on_error(message)
+        self.voice.resume()
+
+    def _on_activity(self, label):
+        # Execution activity is status-only. Internal context/observe checks
+        # must never leak into the chat transcript as assistant content.
+        text = str(label or "").strip()
+        if text.casefold() in self._INTERNAL_TEXT:
+            return
+        super()._on_activity(text)
 
     def closeEvent(self, event):
         self.proactive_surface.stop()
