@@ -1,7 +1,6 @@
 """Direct desktop command router.
 
-Supported operating-system commands execute here, with no planner, observer,
-verification task or background agent involved.
+Supported desktop controls execute without planner, observer or verification tasks.
 """
 from __future__ import annotations
 
@@ -21,19 +20,26 @@ def _text(value):
     return re.sub(r"\s+", " ", str(value or "").strip().casefold().replace("ё", "е"))
 
 
-def _strip_name(value):
+def _strip(value):
     return value.strip(" .,!?")
 
 
 def _parse(message):
     text = re.sub(r"^акира[,:]?\s*", "", _text(message))
+
+    # Explicit Spotify playback: "включи ... на Spotify".
+    match = re.match(r"^(?:включи|поставь|сыграй|запусти)\s+(.+?)\s+(?:на|в)\s+спотифай$", text)
+    if match:
+        query = _strip(match.group(1))
+        if query:
+            return "spotify_play", query
+
     match = re.match(r"^(?P<verb>открой|запусти|закрой|выключи)\s+(?P<target>.+)$", text)
     if match:
         verb = match.group("verb")
-        target = _strip_name(match.group("target"))
+        target = _strip(match.group("target"))
         return ("close" if verb in {"закрой", "выключи"} else "open", _ALIAS.get(target, target))
 
-    # Volume: exact value or relative change.
     absolute = re.search(r"(?:громкость|звук)(?:\s+на)?\s+(\d{1,3})\s*(?:%|процент|процента|процентов)?$", text)
     if absolute:
         return "volume", int(absolute.group(1))
@@ -69,6 +75,9 @@ def ask(message, session_id="desktop"):
     command = _parse(message)
     if command:
         kind, value = command
+        if kind == "spotify_play":
+            from spotify_control import play
+            return play(value)
         if kind in {"open", "close"}:
             from capabilities.apps import open_target, close_target
             result = open_target(value) if kind == "open" else close_target(value)
