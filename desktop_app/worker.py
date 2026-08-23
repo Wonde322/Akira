@@ -1,4 +1,4 @@
-"""Worker thread: executes brain.ask in a separate thread and supports cooperative cancellation."""
+"""Worker thread: executes brain.ask and gives the newest user command priority."""
 
 import queue
 import threading
@@ -14,18 +14,19 @@ class AgentCancelled(Exception):
 
 
 class BrainWorker(QThread):
-    """Queue-backed brain worker with interruptible active execution.
+    """Queue-backed brain worker with cooperative latest-command cancellation.
 
-    Cancellation is cooperative: the current tool call is allowed to return,
-    then the audit boundary raises AgentCancelled before another agent step can
-    continue. This prevents the loop from starting a new action after the user
-    has interrupted it.
+    Ordinary user commands are replacement commands: a new request interrupts
+    the active turn and drops older queued requests. Only explicit "continue"
+    requests preserve the current task. This prevents stale actions from being
+    executed after the user has already changed their mind.
     """
 
     answer_ready = Signal(str)
     error = Signal(str)
     activity = Signal(str)
     busy = Signal(bool)
+    acknowledged = Signal(str)
 
     def __init__(self, session_id="desktop", parent=None):
         super().__init__(parent)
@@ -47,7 +48,6 @@ class BrainWorker(QThread):
                 break
             if message is not None:
                 pending.append(message)
-
         self._queue = queue.Queue()
         for message in pending:
             self._queue.put(message)
@@ -62,34 +62,48 @@ class BrainWorker(QThread):
         self._prepare_start()
         super().start(priority)
 
+    def _drop_pending(self):
+        while True:
+            try:
+                self._queue.get_nowait()
+            except queue.Empty:
+                return
+
     def submit(self, message):
         if message is None:
             return
+        message = str(message).strip()
+        if not message:
+            return
 
-        # A new user request always takes priority over a running agent turn.
-        # "Продолжай" keeps the current plan; any other request starts from a
-        # clean task state after the current safe boundary is reached.
-        text = str(message).strip().lower()
+        text = message.lower()
         resume = text in {"продолжай", "продолжи", "продолжить", "resume", "continue"}
         with self._state_lock:
             active = self._active
-        if active:
-            self._interrupt_preserves_task = resume
+
+        if not resume:
+            # Latest command wins. Do not execute a backlog of obsolete voice
+            # commands after an interruption.
+            self._drop_pending()
+            if active:
+                self._interrupt_preserves_task = False
+                self._suppress_interrupt_notice = True
+                self._cancel_event.set()
+            self.acknowledged.emit(message)
+        elif active:
+            self._interrupt_preserves_task = True
             self._suppress_interrupt_notice = True
             self._cancel_event.set()
+
         self._queue.put(message)
 
     def request_stop(self):
         self._stop = True
         self._cancel_event.set()
+        self._drop_pending()
         self._queue.put(None)
 
     def cancel_current(self):
-        """Interrupt the current agent turn at the next safe audit boundary.
-
-        Returns False when nothing is currently executing, so callers can keep
-        ordinary chat input independent from the interrupt control.
-        """
         with self._state_lock:
             active = self._active
         if not active:
@@ -104,11 +118,9 @@ class BrainWorker(QThread):
         from brain import ask
 
         audit.set_activity_hook(self._on_activity)
-
         try:
             while not self._stop:
                 message = self._queue.get()
-
                 if message is None:
                     break
 
@@ -148,11 +160,8 @@ class BrainWorker(QThread):
 
 def _friendly_error(error):
     text = str(error)
-
     if "GROQ_API_KEY" in text or "api_key" in text.lower():
         return "Не найден GROQ_API_KEY. Проверь настройки API."
-
     if "denied" in text.lower():
         return "Действие не разрешено."
-
     return "Не удалось выполнить действие. Попробуй ещё раз."
