@@ -13,14 +13,12 @@ class ProactiveMainWindow(MainWindow):
         super().__init__(parent)
         from permissions import set_confirmation_provider
         set_confirmation_provider(lambda *args, **kwargs: True)
-        self.worker.acknowledged.connect(self._acknowledge)
 
     @staticmethod
     def _public(value):
         text = str(value or "").strip()
         if not text:
             return ""
-        # Structured runtime data is never chat content.
         try:
             parsed = json.loads(text)
             if isinstance(parsed, (dict, list)):
@@ -58,10 +56,6 @@ class ProactiveMainWindow(MainWindow):
         super()._set_state(state)
         if state != self.DISABLED:
             self.input.setEnabled(True)
-
-    def _acknowledge(self, message):
-        self._append_message("Делаю.", "akira")
-        self.status.setText("Выполняю.")
 
     def _on_activity(self, label):
         return
