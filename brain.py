@@ -8,8 +8,8 @@ from __future__ import annotations
 import re
 
 APPS = {
-    "spotify": "Spotify", "спотифай": "Spotify", "спотифая": "Spotify", "спотифае": "Spotify",
-    "discord": "Discord", "дискорд": "Discord",
+    "spotify": "Spotify", "спотифай": "Spotify", "спотифая": "Spotify", "спотифае": "Spotify", "спотифаи": "Spotify", "спотифаю": "Spotify",
+    "discord": "Discord", "дискорд": "Discord", "дискорда": "Discord", "дискорду": "Discord",
     "safari": "Safari", "сафари": "Safari",
     "chrome": "Google Chrome", "хром": "Google Chrome", "гугл хром": "Google Chrome",
     "terminal": "Terminal", "терминал": "Terminal",
@@ -23,25 +23,22 @@ def normalize(message: object) -> str:
     text = str(message or "").casefold().replace("ё", "е").strip()
     text = re.sub(r"^акира[,:;\-]?\s*", "", text)
     text = re.sub(r"\s+", " ", text)
-    # Speech recognition commonly changes the ending of «спотифай».
-    text = re.sub(r"спотифа(?:й|я|е|и)?\b", "спотифай", text)
+    # Common speech-recognition inflections and endings.
+    text = re.sub(r"спотифа(?:й|я|е|и|ю)\b", "спотифай", text)
+    text = re.sub(r"дискорд(?:а|у|ом|е)?\b", "дискорд", text)
     return text.strip(" .,!?:;")
 
 
 def _name(value: str) -> str:
     value = value.strip(" .,!?:;")
+    # Speech recognition can insert a short preposition before an app name.
+    value = re.sub(r"^(?:к|ко|в|на)\s+", "", value)
     return APPS.get(value, value)
 
 
 def _targets(value: str) -> list[str]:
-    value = value.strip()
-    parts = re.split(r"\s*(?:,|\bи\b|\bа также\b|\bпотом\b)\s*", value)
-    result = []
-    for part in parts:
-        name = _name(part)
-        if name:
-            result.append(name)
-    return result
+    parts = re.split(r"\s*(?:,|\bи\b|\bа также\b|\bпотом\b)\s*", value.strip())
+    return [name for part in parts if (name := _name(part))]
 
 
 def parse(message: object):
@@ -49,12 +46,12 @@ def parse(message: object):
     if text in STOP_WORDS:
         return ("stop", None)
 
-    # «включи Тёмного Принца на Spotify», including ASR variants.
     match = re.match(r"^(?:включи|поставь|сыграй)\s+(.+?)\s+(?:на|в)\s+спотифай$", text)
     if match and match.group(1).strip():
         return ("spotify", match.group(1).strip())
 
-    match = re.match(r"^(открой|запусти|закрой|выключи)\s+(.+)$", text)
+    # Accept ordinary commands and ASR-inserted particles: «закрой к спотифаю».
+    match = re.match(r"^(открой|запусти|закрой|выключи)\s+(?:к|ко)?\s*(.+)$", text)
     if match:
         verb, raw = match.groups()
         action = "close" if verb in {"закрой", "выключи"} else "open"
@@ -91,7 +88,6 @@ def ask(message, session_id="desktop"):
     if command is None:
         import agent_loop
         return agent_loop.ask(message, session_id=session_id)
-
     kind, value = command
     if kind == "stop":
         return "Остановил."
