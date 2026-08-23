@@ -1,113 +1,89 @@
-"""Single foreground-command desktop window.
+"""Desktop command surface.
 
-The previous proactive bridge could inject internal context/task messages into
-the same UI used for user commands.  This window intentionally has no
-background task surface: one user command enters, one user-facing answer exits.
+Only user commands and final user-facing answers are rendered here.
 """
+from __future__ import annotations
+
 import json
-import re
-
 from .window import MainWindow
-
-_INTERNAL = re.compile(
-    r"(?:провер(?:ить|яю)\s+контекст|checking\s+context|\"?(?:evidence|verification|task_id|process_state)\"?\s*:)",
-    re.IGNORECASE,
-)
 
 
 class ProactiveMainWindow(MainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
-
-        # Desktop commands are auto-authorized.  Do this after MainWindow has
-        # installed its legacy confirmation provider, so that provider cannot
-        # create a modal dialog for ordinary execution.
         from permissions import set_confirmation_provider
-        set_confirmation_provider(lambda *_args, **_kwargs: True)
-
+        set_confirmation_provider(lambda *args, **kwargs: True)
         self.worker.acknowledged.connect(self._acknowledge)
 
     @staticmethod
-    def _clean(text):
-        text = str(text or "").strip()
+    def _public(value):
+        text = str(value or "").strip()
         if not text:
             return ""
-        if _INTERNAL.search(text):
-            return ""
+        # Structured runtime data is never chat content.
         try:
-            value = json.loads(text)
+            parsed = json.loads(text)
+            if isinstance(parsed, (dict, list)):
+                return ""
         except Exception:
-            return text
-        if isinstance(value, (dict, list)):
+            pass
+        lowered = text.casefold()
+        if any(token in lowered for token in (
+            "проверить контекст", "checking context", "verification", "evidence",
+            "process_state", "task_id", "plan_task", "verify_goal",
+        )):
             return ""
         return text
 
-    def _replace_command(self, message, voice):
-        message = self._clean(message)
+    def _submit(self, message, voice=False):
+        message = str(message or "").strip()
         if not message:
             return
         if self._state == self.SPEAKING:
             self.voice.stop_speaking()
         self._append_message(message, "user")
         self._last_voice = bool(voice)
-        # Never pause the listener while work is running: the next command is
-        # allowed to replace this one.
-        self.voice.resume()
+        self.input.setEnabled(True)
         self.worker.submit(message)
         self._set_state(self.THINKING)
-        self.input.setEnabled(True)
+        self.voice.resume()
 
     def _on_submit(self, message):
-        self._replace_command(message, False)
+        self._submit(message, False)
 
     def _on_voice_text(self, text):
-        self._replace_command(text, True)
+        self._submit(text, True)
 
     def _set_state(self, state):
         super()._set_state(state)
         if state != self.DISABLED:
             self.input.setEnabled(True)
 
-    def _on_mic_clicked(self):
-        if self._state == self.DISABLED:
-            return
-        if self._state == self.SPEAKING:
-            self.voice.stop_speaking()
-        if self._mic_active:
-            self.voice.cancel_capture()
-            self._set_state(self.IDLE)
-            return
-        self.voice.capture_once()
-
-    def _acknowledge(self, _message):
+    def _acknowledge(self, message):
         self._append_message("Делаю.", "akira")
         self.status.setText("Выполняю.")
 
     def _on_activity(self, label):
-        label = self._clean(label)
-        if label:
-            self.status.setText(label)
+        return
 
     def _on_answer(self, answer):
-        answer = self._clean(answer) or "Готово."
-        self._append_message(answer, "akira")
+        answer = self._public(answer)
+        if answer:
+            self._append_message(answer, "akira")
         self._clear_status()
         self._set_state(self.IDLE)
-        # Keep recognition armed after every answer as well.
         self.voice.resume()
 
     def _on_error(self, message):
-        message = self._clean(message) or "Не удалось выполнить действие."
+        message = self._public(message) or "Не удалось выполнить действие."
         self._show_error(message)
         self._set_state(self.IDLE)
         self.voice.resume()
 
-    def _on_confirmation(self, *_args):
-        # Defensive no-op for legacy UI signals: command execution never waits
-        # on a modal confirmation in desktop mode.
-        request = _args[-1] if _args else None
+    def _on_confirmation(self, *args):
+        request = args[-1] if args else None
         if isinstance(request, dict):
             request["allowed"] = True
-            answered = request.get("answered")
-            if answered is not None:
-                answered.set()
+            event = request.get("answered")
+            if event is not None:
+                event.set()
