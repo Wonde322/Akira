@@ -19,17 +19,28 @@ class BrainWorker(QThread):
         message=str(message or "").strip()
         if not message:return
         with self._lock:
-            self._generation+=1; generation=self._generation; self._cancel.set()
+            replacing=self._active; self._generation+=1; generation=self._generation; self._cancel.set()
             while True:
                 try:self._queue.get_nowait()
                 except queue.Empty:break
             self._queue.put((generation,message)); self.acknowledged.emit(message)
-    def request_stop(self):
-        self._stop.set(); self._cancel.set(); self._queue.put(None)
+        if replacing:
+            # Clear the old task context immediately. The active turn also sees
+            # _cancel at its next tool boundary and cannot continue into another action.
+            try:
+                from brain import get_session
+                get_session(self.session_id).end_task()
+            except Exception: pass
+    def request_stop(self): self._stop.set(); self._cancel.set(); self._queue.put(None)
     def cancel_current(self):
         with self._lock:
             if not self._active:return False
-            self._generation+=1; self._cancel.set(); return True
+            self._generation+=1; self._cancel.set()
+        try:
+            from brain import get_session
+            get_session(self.session_id).end_task()
+        except Exception:pass
+        return True
     def _current(self,generation):
         with self._lock:return generation==self._generation and not self._stop.is_set()
     def run(self):
@@ -40,8 +51,7 @@ class BrainWorker(QThread):
             while not self._stop.is_set():
                 item=self._queue.get()
                 if item is None:break
-                generation,message=item
-                self._cancel.clear()
+                generation,message=item; self._cancel.clear()
                 with self._lock:self._active=True
                 self.busy.emit(True)
                 try:
@@ -49,8 +59,7 @@ class BrainWorker(QThread):
                     if self._current(generation): self.answer_ready.emit(answer or "Готово.")
                 except CommandCancelled: pass
                 except Exception as error:
-                    if self._current(generation):
-                        traceback.print_exc(); self.error.emit(_friendly_error(error))
+                    if self._current(generation): traceback.print_exc(); self.error.emit(_friendly_error(error))
                 finally:
                     with self._lock:self._active=False
                     if self._current(generation): self.busy.emit(False)
