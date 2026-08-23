@@ -1,4 +1,4 @@
-"""Spotify playback controller with automatic first-time authorization."""
+"""Spotify playback controller with direct play, pause and next-track actions."""
 from __future__ import annotations
 import json, ssl, subprocess, sys, time, urllib.error, urllib.parse, urllib.request
 from pathlib import Path
@@ -12,8 +12,7 @@ _TOKEN_PATH=Path(SPOTIFY_TOKEN_FILE)
 def load_token():
     with _TOKEN_PATH.open(encoding="utf-8") as f:return json.load(f)
 
-def save_token(token):
-    _TOKEN_PATH.write_text(json.dumps(token,ensure_ascii=False,indent=2),encoding="utf-8")
+def save_token(token):_TOKEN_PATH.write_text(json.dumps(token,ensure_ascii=False,indent=2),encoding="utf-8")
 
 def ensure_token():
     if _TOKEN_PATH.is_file():return load_token()
@@ -22,13 +21,10 @@ def ensure_token():
     process=subprocess.Popen([sys.executable,str(auth)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
     deadline=time.monotonic()+120
     while time.monotonic()<deadline:
-        if _TOKEN_PATH.is_file():
-            return load_token()
-        if process.poll() is not None:
-            raise RuntimeError("Авторизация Spotify была отменена или завершилась ошибкой.")
-        time.sleep(0.25)
-    process.terminate()
-    raise RuntimeError("Spotify ждёт авторизацию в открывшемся окне браузера.")
+        if _TOKEN_PATH.is_file():return load_token()
+        if process.poll() is not None:raise RuntimeError("Авторизация Spotify была отменена или завершилась ошибкой.")
+        time.sleep(.25)
+    process.terminate(); raise RuntimeError("Spotify ждёт авторизацию в открывшемся окне браузера.")
 
 def refresh_token(token):
     body=urllib.parse.urlencode({"client_id":CLIENT_ID,"grant_type":"refresh_token","refresh_token":token["refresh_token"]}).encode()
@@ -77,6 +73,17 @@ def _wait_for_device(token,seconds=10):
             return active["id"]
         time.sleep(.5)
     return None
+
+def _control(endpoint,success):
+    try:
+        token=ensure_token(); _activate_desktop(); device_id=_wait_for_device(token)
+        if not device_id:return "Spotify открыт, но не появился в списке устройств воспроизведения."
+        api("POST",endpoint+"?"+urllib.parse.urlencode({"device_id":device_id}),token)
+        return success
+    except Exception as exc:return f"Не удалось выполнить действие в Spotify: {exc}"
+
+def pause():return _control("/me/player/pause","Остановил Spotify.")
+def next_track():return _control("/me/player/next","Следующий трек.")
 
 def play(query):
     query=str(query or "").strip()
