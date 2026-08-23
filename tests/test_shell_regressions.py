@@ -17,8 +17,11 @@ def test_nonzero_exit_is_not_reported_as_success(monkeypatch):
 
     assert result["success"] is False
     assert result["error"] == "nonzero_exit"
-    assert result["data"] == "boom"
-    assert result["metadata"]["exit_code"] == 2
+    assert result["data"] == {
+        "exit_code": 2,
+        "stdout": "",
+        "stderr": "boom",
+    }
 
 
 def test_successful_exit_keeps_output_data(monkeypatch):
