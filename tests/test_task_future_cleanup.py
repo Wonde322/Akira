@@ -1,10 +1,15 @@
 from task_runtime import TaskRuntime
 
 
+class ImmediateFuture:
+    def done(self):
+        return True
+
+
 class ImmediateExecutor:
     def submit(self, fn, *args):
         fn(*args)
-        return object()
+        return ImmediateFuture()
 
 
 def test_immediate_completion_does_not_leave_stale_future(tmp_path, monkeypatch):
