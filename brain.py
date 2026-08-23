@@ -1,10 +1,12 @@
-"""Desktop command router with direct controls and short-command context."""
+"""Direct desktop command router with per-session action context."""
 from __future__ import annotations
 import re
 
 APPS={"spotify":"Spotify","спотифай":"Spotify","спотифая":"Spotify","спотифае":"Spotify","спотифаи":"Spotify","спотифаю":"Spotify","discord":"Discord","дискорд":"Discord","дискорда":"Discord","дискорду":"Discord","safari":"Safari","сафари":"Safari","chrome":"Google Chrome","хром":"Google Chrome","гугл хром":"Google Chrome","terminal":"Terminal","терминал":"Terminal","finder":"Finder","файндер":"Finder"}
 STOP_WORDS={"стоп","остановись","отмена","отмени","хватит","stop","cancel"}
+MORE_WORDS={"еще","ещё","еще раз","ещё раз","повтори","продолжай","дальше"}
 _LAST_TARGETS={}
+_LAST_ACTION={}
 
 def normalize(message):
     text=str(message or "").casefold().replace("ё","е").strip()
@@ -22,6 +24,7 @@ def _targets(value):
 def parse(message):
     text=normalize(message)
     if text in STOP_WORDS:return ("stop",None)
+    if text in MORE_WORDS:return ("repeat",None)
     if text in {"закрой","выключи"}:return ("close_context",None)
     m=re.match(r"^(?:включи|поставь|сыграй)\s+(.+?)\s+(?:на|в)\s+спотифай$",text)
     if m and m.group(1).strip():return ("spotify",m.group(1).strip())
@@ -50,14 +53,19 @@ def ask(message,session_id="desktop"):
     if command is None:
         import agent_loop; return agent_loop.ask(message,session_id=session_id)
     kind,value=command
-    if kind=="stop":return "Остановил."
+    if kind=="stop":
+        _LAST_ACTION.pop(session_id,None); return "Остановил."
+    if kind=="repeat":
+        previous=_LAST_ACTION.get(session_id)
+        if previous is None:return "Не понимаю, что повторить."
+        kind,value=previous
     if kind=="close_context":
         value=_LAST_TARGETS.get(session_id,[])
         if not value:return "Не понимаю, что закрыть."
         kind="close"
     if kind=="spotify":
         from spotify_control import play
-        _LAST_TARGETS[session_id]=["Spotify"]; return play(value)
+        _LAST_TARGETS[session_id]=["Spotify"]; _LAST_ACTION[session_id]=(kind,value); return play(value)
     if kind in {"open","close"}:
         from capabilities.apps import open_target,close_target
         done=[]; failed=[]
@@ -65,10 +73,13 @@ def ask(message,session_id="desktop"):
             result=open_target(target) if kind=="open" else close_target(target)
             (done if result.get("success") else failed).append(target if result.get("success") else f"{target}: {result.get('error') or 'не удалось'}")
         if done:_LAST_TARGETS[session_id]=done
+        _LAST_ACTION[session_id]=(kind,value)
         if failed and not done:return "Не удалось выполнить: "+"; ".join(failed)
         answer=f"{'Открыл' if kind=='open' else 'Закрыл'}: {', '.join(done)}."
         return answer if not failed else answer+" Не удалось: "+"; ".join(failed)
-    if kind=="volume":return f"Громкость: {_volume(value=value)}%"
+    if kind=="volume":
+        _LAST_ACTION[session_id]=(kind,value); return f"Громкость: {_volume(value=value)}%"
+    _LAST_ACTION[session_id]=(kind,value)
     return f"Громкость: {_volume(delta=value)}%"
 
 def get_session(session_id="desktop"):
