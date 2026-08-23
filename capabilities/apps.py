@@ -2,6 +2,7 @@
 
 import os
 import subprocess
+import time
 
 from .backend import get_backend
 from .filesystem import CapabilityError, resolve_path
@@ -22,7 +23,6 @@ def _app_name_from_target(target):
 
 
 def _confirm_frontmost(app_name):
-    """Return the frontmost app only when activation can actually be confirmed."""
     try:
         ui = _gui_backend().ui_metadata()
     except Exception:
@@ -35,6 +35,44 @@ def _confirm_frontmost(app_name):
     if _app_name_from_target(str(frontmost)).lower() == _app_name_from_target(app_name).lower():
         return frontmost
     return None
+
+
+def app_running(target):
+    """Return actual process state; Dock icons and screenshots are not evidence."""
+    app_name = _app_name_from_target(str(target).strip())
+    if not app_name:
+        return False
+    script = (
+        'tell application "System Events" to '
+        'return exists (process "' + _applescript_escape(app_name) + '")'
+    )
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True,
+            text=True,
+        )
+    except Exception:
+        return None
+    if result.returncode != 0:
+        return None
+    value = result.stdout.strip().lower()
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    return None
+
+
+def _wait_for_app_state(target, expected, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    last = app_running(target)
+    while time.monotonic() < deadline:
+        if last is expected:
+            return last
+        time.sleep(0.1)
+        last = app_running(target)
+    return last
 
 
 def _classify(target):
@@ -69,8 +107,14 @@ def open_target(target):
     if result.returncode != 0:
         message = (result.stderr or result.stdout or "").strip() or "Не удалось открыть: " + target
         return fail("open_failed", message, target=target, kind=kind)
+
     data = {"target": target, "kind": kind}
     if kind == "app":
+        running = _wait_for_app_state(target, True)
+        if running is False:
+            return fail("open_unverified", "Приложение не появилось среди запущенных процессов.", target=target, kind=kind, running=False)
+        data["running"] = running
+        data["verification"] = "process_state" if running is True else "unavailable"
         frontmost = _confirm_frontmost(target)
         if frontmost:
             data.update(activated=True, frontmost=frontmost)
@@ -78,7 +122,7 @@ def open_target(target):
 
 
 def close_target(target):
-    """Close an application by name or .app path."""
+    """Close an application by name or .app path and verify process termination."""
     if not isinstance(target, str) or not target.strip():
         return fail("invalid_target", "target должен быть непустой строкой.")
     target = target.strip()
@@ -91,4 +135,13 @@ def close_target(target):
     if result.returncode != 0:
         message = (result.stderr or result.stdout or "").strip() or "Не удалось закрыть: " + target
         return fail("close_failed", message, target=target)
-    return ok({"target": target, "app": app_name})
+
+    running = _wait_for_app_state(app_name, False)
+    if running is True:
+        return fail("close_unverified", "Приложение всё ещё присутствует среди запущенных процессов.", target=target, app=app_name, running=True)
+    return ok({
+        "target": target,
+        "app": app_name,
+        "running": running,
+        "verification": "process_state" if running is False else "unavailable",
+    })
