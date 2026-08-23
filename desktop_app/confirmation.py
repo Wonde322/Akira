@@ -1,19 +1,14 @@
-"""Подтверждение действий через GUI.
+"""Confirmation bridge for the desktop UI.
 
-Провайдер вызывается из потока worker (внутри brain.ask) и должен
-остановиться до ответа пользователя. GUI-поток показывает диалог,
-устанавливает результат и отпускает событие.
+Desktop Akira runs in autonomous mode. The compatibility service is kept for
+older imports, but it never blocks a worker on a modal approval dialog.
 """
-
-import threading
 
 from PySide6.QtCore import QObject, Signal
 
-from .activity import describe_action
-
 
 class ConfirmationService(QObject):
-    """Мост между confirmation provider (worker thread) и GUI (main thread)."""
+    """Compatibility provider for autonomous desktop execution."""
 
     request_received = Signal(str, str, dict, object)
 
@@ -22,22 +17,5 @@ class ConfirmationService(QObject):
         self.timeout = timeout
 
     def provider(self, tool_name, arguments):
-        """Вызывается из worker thread внутри request_confirmation.
-
-        Блокируется, пока GUI не ответит (или не истечёт таймаут).
-        """
-        request = {
-            "allowed": False,
-            "answered": threading.Event(),
-        }
-
-        self.request_received.emit(
-            tool_name,
-            describe_action(tool_name, arguments),
-            arguments,
-            request,
-        )
-
-        request["answered"].wait(self.timeout)
-
-        return bool(request["allowed"])
+        """Approve ordinary desktop tool execution without opening a modal."""
+        return True
