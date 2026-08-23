@@ -32,7 +32,10 @@ class TaskRuntime:
         if isinstance(max_workers, bool) or int(max_workers) < 1:
             raise ValueError("max_workers must be a positive integer")
         self.max_workers = int(max_workers)
-        self._executor = ThreadPoolExecutor(max_workers=self.max_workers, thread_name_prefix="akira-bg")
+        self._executor = ThreadPoolExecutor(
+            max_workers=self.max_workers,
+            thread_name_prefix="akira-bg",
+        )
         self._lock = threading.RLock()
         self._tasks = {}
         self._futures = {}
@@ -52,7 +55,12 @@ class TaskRuntime:
         if status in _ACTIVE_STATUSES:
             status = "interrupted"
         task = dict(raw)
-        task.update({"id": task_id, "goal": goal, "session_id": str(raw.get("session_id") or f"background:{task_id}").strip() or f"background:{task_id}", "status": status})
+        task.update({
+            "id": task_id,
+            "goal": goal,
+            "session_id": str(raw.get("session_id") or f"background:{task_id}").strip() or f"background:{task_id}",
+            "status": status,
+        })
         try:
             task["causation_depth"] = max(0, int(raw.get("causation_depth") or 0))
         except (TypeError, ValueError):
@@ -93,7 +101,9 @@ class TaskRuntime:
     def _save(self):
         TASK_FILE.parent.mkdir(parents=True, exist_ok=True)
         payload = list(self._tasks.values())[-MAX_STORED_TASKS:]
-        fd, temp_path = tempfile.mkstemp(prefix=".background-tasks-", suffix=".tmp", dir=TASK_FILE.parent)
+        fd, temp_path = tempfile.mkstemp(
+            prefix=".background-tasks-", suffix=".tmp", dir=TASK_FILE.parent
+        )
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 json.dump(payload, handle, ensure_ascii=False, indent=2)
@@ -119,8 +129,12 @@ class TaskRuntime:
             depth = max(0, int(causation_depth or 0))
         except (TypeError, ValueError):
             depth = 0
-        now = _now()
-        return {"id": task_id, "goal": str(goal).strip(), "session_id": str(session_id), "parent_event_id": parent_event_id, "correlation_id": correlation_id, "causation_depth": depth, "status": "queued", "created_at": now, "started_at": None, "finished_at": None, "result": None, "error": None}
+        return {
+            "id": task_id, "goal": str(goal).strip(), "session_id": str(session_id),
+            "parent_event_id": parent_event_id, "correlation_id": correlation_id,
+            "causation_depth": depth, "status": "queued", "created_at": _now(),
+            "started_at": None, "finished_at": None, "result": None, "error": None,
+        }
 
     @staticmethod
     def _event_payload(task, *, result=None, error=None):
@@ -147,7 +161,8 @@ class TaskRuntime:
                 if task["status"] not in _TERMINAL_STATUSES:
                     task["status"] = "running"
                     task["started_at"] = _now()
-                if future.done():
+                done = getattr(future, "done", lambda: False)
+                if done():
                     self._futures.pop(task_id, None)
                 else:
                     self._futures[task_id] = future
@@ -196,10 +211,10 @@ class TaskRuntime:
                 if task["status"] in {"cancelled", "cancelling"}:
                     if task["status"] == "cancelling":
                         task.update(status="cancelled", finished_at=_now())
-                        self._save()
                         event_type = "task.cancelled"
                         event_payload = self._event_payload(task, error=task.get("error"))
                         event_task = dict(task)
+                        self._save()
                     return None
                 goal, session_id = task["goal"], task["session_id"]
             from agent_runtime import get_agent_runtime
@@ -280,9 +295,9 @@ class TaskRuntime:
             limit = 20
         limit = max(1, min(limit, 50))
         with self._lock:
-            tasks = list(self._tasks.values())[-limit:]
+            tasks = [dict(task) for task in list(self._tasks.values())[-limit:]]
             tasks.reverse()
-            return {"success": True, "tasks": [dict(task) for task in tasks], "output": json.dumps(tasks, ensure_ascii=False, indent=2)}
+            return {"success": True, "tasks": tasks, "output": json.dumps(tasks, ensure_ascii=False, indent=2)}
 
     def result(self, task_id):
         response = self.status(task_id)
@@ -333,8 +348,6 @@ def list_tasks(limit=20):
     return get_runtime().list_tasks(limit)
 
 
-# Tool registry compatibility: keep the public capability names stable while
-# the implementation remains centered on TaskRuntime.
 def background_task_start(goal, session_id=None, **kwargs):
     return spawn_task(goal, session_id=session_id, **kwargs)
 
@@ -349,3 +362,7 @@ def background_task_result(task_id):
 
 def background_task_cancel(task_id, reason="Cancelled by user"):
     return cancel_task(task_id, reason)
+
+
+def background_tasks(limit=20):
+    return list_tasks(limit)
