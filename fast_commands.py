@@ -1,8 +1,4 @@
-"""Low-latency deterministic command path for common computer actions.
-
-The fast path handles facts and reversible desktop primitives directly and
-leaves ambiguous or compound tasks to the canonical reasoning loop.
-"""
+"""Low-latency deterministic command path for common computer actions."""
 from __future__ import annotations
 
 import re
@@ -13,10 +9,15 @@ from app_control import close_target, open_target
 from computer_state import audio_devices, bluetooth_devices, frontmost_app, network, running_apps, volume
 
 _GREETING = re.compile(r"^(?:привет|приветик|здарова|здорово|здравствуй|хай|hello|hi)[!. ]*$", re.I)
+_WAKE_PREFIX = re.compile(r"^(?:эй\s+)?акира\s*[,!:\-]?\s*|^(?:hey\s+akira)\s*[,!:\-]?\s*", re.I)
 
 
 def _clean(text: str) -> str:
     return re.sub(r"\s+", " ", str(text or "").strip())
+
+
+def _strip_wake_prefix(text: str) -> str:
+    return _WAKE_PREFIX.sub("", text, count=1).strip()
 
 
 def _target_after(text: str, patterns: tuple[str, ...]) -> str | None:
@@ -84,6 +85,10 @@ def handle(text: str) -> dict[str, Any] | None:
     if _GREETING.fullmatch(text):
         return {"handled": True, "response": "Привет.", "action": "greeting"}
     if re.fullmatch(r"(?:акира|эй\s+акира|akira|hey\s+akira)[!. ]*", text, re.I):
+        return {"handled": True, "response": "Да?", "action": "wake"}
+
+    text = _strip_wake_prefix(text)
+    if not text:
         return {"handled": True, "response": "Да?", "action": "wake"}
 
     target = _target_after(text, (
