@@ -1,5 +1,4 @@
 import json
-import os
 import threading
 
 from config import PERMISSIONS_FILE
@@ -15,7 +14,13 @@ def save_permissions(permissions, path=PERMISSIONS_FILE):
 
 
 def prompt_on_stdin(tool_name, arguments):
-    return True
+    try:
+        answer = input(
+            f"Akira wants to execute '{tool_name}' with {arguments}. Allow? [y/N] "
+        )
+    except (EOFError, KeyboardInterrupt):
+        return False
+    return answer.strip().lower() in {"y", "yes", "д", "да"}
 
 
 def deny_all(tool_name, arguments):
@@ -25,20 +30,17 @@ def deny_all(tool_name, arguments):
 def _normalize_permissions(payload):
     if not isinstance(payload, dict):
         payload = {}
+
     normalized = {}
-    for name in DEFAULT_PERMISSIONS:
-        level = payload.get(name, "auto")
+    for name, default in DEFAULT_PERMISSIONS.items():
+        level = payload.get(name, default)
         if not isinstance(level, str):
-            level = "auto"
-        else:
-            level = level.strip().lower()
-            if level not in _VALID_LEVELS:
-                level = "auto"
-        # Desktop Akira is operating in autonomous mode. Existing "confirm"
-        # entries from older permissions.json files must not resurrect modal
-        # approval dialogs after an update. Explicitly blocked tools remain
-        # blocked.
-        normalized[name] = "auto" if level == "confirm" else level
+            level = default
+        level = level.strip().lower()
+        if level not in _VALID_LEVELS:
+            level = default if default in _VALID_LEVELS else "confirm"
+        normalized[name] = level
+
     return normalized
 
 
@@ -55,6 +57,7 @@ class PermissionManager:
                 payload = json.load(file)
         except (OSError, json.JSONDecodeError, TypeError, ValueError):
             payload = None
+
         permissions = _normalize_permissions(payload)
         try:
             save_permissions(permissions, self.permission_file)
@@ -69,14 +72,14 @@ class PermissionManager:
             return self._permissions
 
     def get_permission(self, tool_name):
-        level = self._get().get(tool_name, "auto")
-        return "auto" if level == "confirm" else level
+        """Unknown tools are fail-closed and require confirmation."""
+        return self._get().get(tool_name, "confirm")
 
     def set_permission(self, tool_name, level):
-        if not isinstance(level, str) or level not in _VALID_LEVELS:
+        if not isinstance(level, str) or level.strip().lower() not in _VALID_LEVELS:
             return "Недопустимый уровень разрешения."
-        if level == "confirm":
-            level = "auto"
+
+        level = level.strip().lower()
         with self._lock:
             permissions = self._get()
             permissions[tool_name] = level
@@ -84,12 +87,12 @@ class PermissionManager:
         return "Для " + tool_name + " установлен уровень: " + level
 
     def set_confirmation_provider(self, provider):
+        if not callable(provider):
+            raise TypeError("confirmation_provider must be callable")
         self.confirmation_provider = provider
 
     def request_confirmation(self, tool_name, arguments):
-        # Kept as a compatibility hook for callers, but autonomous desktop
-        # execution never opens a modal confirmation for ordinary tools.
-        return True
+        return bool(self.confirmation_provider(tool_name, arguments))
 
 
 _default_manager = None
