@@ -1,32 +1,27 @@
-"""
-ЭТАП 22/29 — адаптер реального execution boundary проекта.
-Автоматически найден: agent_loop.py:execute_tool
-"""
+"""Adapter to the canonical agent-loop execution boundary."""
 
-from agent_loop import execute_tool as _execute
+from agent_loop import execute_tool_result
 
 
 class ToolExecutionAdapter:
+    """Expose the canonical structured execution contract to Runtime."""
 
     def execute(self, action, arguments=None):
-        arguments = arguments or {}
+        result = execute_tool_result(
+            action,
+            arguments or {},
+            source="runtime",
+        )
 
-        attempts = [
-            lambda: _execute(action, arguments),
-            lambda: _execute(
-                action=action,
-                arguments=arguments,
-            ),
-            lambda: _execute(action, **arguments),
-            lambda: _execute(**arguments),
-        ]
+        if isinstance(result, dict):
+            result.setdefault("requested_tool", action)
+            result.setdefault("resolved_tool", action)
+            return result
 
-        last_error = None
-
-        for attempt in attempts:
-            try:
-                return attempt()
-            except TypeError as exc:
-                last_error = exc
-
-        raise last_error
+        return {
+            "success": True,
+            "error": None,
+            "output": result,
+            "requested_tool": action,
+            "resolved_tool": action,
+        }
