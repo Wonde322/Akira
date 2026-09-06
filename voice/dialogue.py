@@ -11,7 +11,7 @@ import sounddevice as sd
 import soundfile as sf
 import webrtcvad
 
-from brain import ask
+from akira_gateway import create_gateway
 from config import create_groq_client
 from permissions import deny_all, set_confirmation_provider
 
@@ -29,6 +29,7 @@ DIALOGUE_TIMEOUT = 8
 
 vad = webrtcvad.Vad(VAD_MODE)
 client = None
+gateway = None
 audio_queue = queue.Queue(maxsize=200)
 speaking = False
 speak_proc = None
@@ -59,6 +60,13 @@ def _ensure_client():
                 "Не задан GROQ_API_KEY: распознавание речи не может подключиться к Groq."
             ) from error
     return client
+
+
+def _get_gateway():
+    global gateway
+    if gateway is None:
+        gateway = create_gateway()
+    return gateway
 
 
 def _is_hallucination(text):
@@ -234,11 +242,14 @@ def process_command(command):
     if not command:
         return
     try:
-        answer = ask(command, session_id="voice")
+        answer = _get_gateway().submit_voice(
+            command,
+            metadata={"session_id": "voice"},
+        )
         if answer:
             speak(answer)
     except Exception as error:
-        print("Ошибка brain.py:", error)
+        print("Ошибка voice gateway:", error)
         speak("Произошла ошибка.")
 
 

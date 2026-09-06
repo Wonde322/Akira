@@ -1,140 +1,72 @@
-"""Desktop router: explicit OS commands or direct LLM conversation."""
+"""Compatibility facade for the canonical Akira agent loop."""
 from __future__ import annotations
+from pathlib import Path
+import shutil
+from config import COMPUTER_USE_MAX_STEPS, MAX_TOOL_ITERATIONS, MAX_ACTIONS_WITHOUT_OBSERVE, NO_PROGRESS_LIMIT, MODEL
+from permissions import get_permission, request_confirmation
+from tool_registry import get_tool_implementation, get_tool_schemas
+from capabilities.protocol import result_to_text, is_structured
+from agent_loop import SYSTEM_PROMPT, get_session as _canonical_get_session
 
-import re
-import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+SYSTEM=SYSTEM_PROMPT; TOOLS=get_tool_schemas(); client=None
+# Legacy Brain exposes the canonical default history by identity. Clear only on
+# module initialization so reloaded compatibility consumers start clean while
+# normal repeated calls retain conversation state.
+conversation=_canonical_get_session(None).history
+conversation.clear()
 
-APPS = {"spotify":"Spotify","спотифай":"Spotify","discord":"Discord","дискорд":"Discord","safari":"Safari","сафари":"Safari","chrome":"Google Chrome","хром":"Google Chrome","гугл хром":"Google Chrome","terminal":"Terminal","терминал":"Terminal","finder":"Finder","файндер":"Finder"}
-STOP = {"стоп","остановись","отмена","отмени","хватит","stop","cancel"}
-MORE = {"дальше","следующий","следующий трек","скип","пропусти"}
-CONTEXT: dict[str, dict] = {}
-CHAT: dict[str, list[dict]] = {}
-LOCK = threading.Lock()
-SYSTEM = "Ты Акира, мужской персональный ассистент. Отвечай на русском, естественно и по делу. В обычном разговоре отвечай как AI-модель, используя свои знания и рассуждение. Не подменяй ответы заранее прописанными шаблонами. Не утверждай, что выполнил действие на компьютере, если оно не выполнялось."
+def _ensure_client():
+    import config
+    global client
+    if config._client is None: client=config.create_groq_client()
+    else: client=config._client
+    return config._client
 
+def _tool_result_text(result): return result_to_text(result)
+def _invalid_arguments_result(function_name,error): return {"success":False,"error":"invalid_arguments","output":"Невалидный JSON аргументов для "+function_name+": "+str(error)}
 
-def norm(value):
-    value = str(value or "").casefold().replace("ё", "е").strip()
-    value = re.sub(r"^акира[,:;\-]?\s*", "", value)
-    value = re.sub(r"спотифа(?:й|я|е|и|ю)\b", "спотифай", value)
-    value = re.sub(r"дискорд(?:а|у|ом|е)?\b", "дискорд", value)
-    return re.sub(r"\s+", " ", value).strip(" .,!?:;")
+def execute_tool_result(function_name,arguments,source=None):
+    arguments=dict(arguments or {}); permission=get_permission(function_name)
+    if permission=="blocked": return {"success":False,"error":"permission_denied","output":"Инструмент заблокирован настройками разрешений."}
+    if permission=="confirm" and not request_confirmation(function_name,arguments): return {"success":False,"error":"confirmation_denied","output":"Пользователь не разрешил выполнение действия."}
+    implementation=get_tool_implementation(function_name)
+    if implementation is None: return {"success":False,"error":"unknown","output":"Неизвестный инструмент."}
+    try:
+        result=implementation(**arguments)
+        if is_structured(result): return result
+        return {"success":True,"error":None,"output":str(result)}
+    except Exception as exc: return {"success":False,"error":"execution_error","output":f"Ошибка выполнения инструмента: {exc}"}
 
+def execute_tool(function_name,arguments): return execute_tool_result(function_name,arguments)["output"]
+def _should_stop(session):
+    from agent_loop import _should_stop as canonical_should_stop
+    return canonical_should_stop(session)
 
-def remember(session, kind, **data):
-    CONTEXT[session] = {"kind": kind, **data}
+def _sync_compat_audit(agent_loop):
+    try:
+        import audit
+        destination=Path(audit.AUDIT_FILE)
+        if destination.exists(): return
+        old_globals=getattr(agent_loop.record_tool_execution,"__globals__",{})
+        source=Path(old_globals.get("AUDIT_FILE", ""))
+        if source.exists() and source.resolve()!=destination.resolve(): destination.parent.mkdir(parents=True,exist_ok=True); shutil.copyfile(source,destination)
+    except (OSError,TypeError,ValueError): pass
 
+class Brain:
+    def ask(self,message,session_id=None): return ask(message,session_id=session_id)
+    def run(self,message,session_id=None): return self.ask(message,session_id=session_id)
+    def handle(self,message,session_id=None): return self.ask(message,session_id=session_id)
+    def process(self,message,session_id=None): return self.ask(message,session_id=session_id)
+    def decide(self,goal,context=None): raise RuntimeError("Structured decisions are owned by agent_loop.ask; use Brain.ask.")
 
-def app_names(chunk):
-    names=[]
-    for part in re.split(r"\s*(?:,|\bи\b|\bа также\b)\s*", chunk):
-        part=re.sub(r"^(?:к|ко|в|на)\s+", "", part.strip())
-        if part: names.append(APPS.get(part, part))
-    return names
+def ask(message,session_id=None):
+    import agent_loop
+    injected_client=client
+    if injected_client is not None: agent_loop.client=injected_client
+    agent_loop.get_permission=get_permission; agent_loop.get_tool_implementation=get_tool_implementation; agent_loop.request_confirmation=request_confirmation; agent_loop._invalid_arguments_result=_invalid_arguments_result
+    try: return agent_loop.ask(message,session_id=session_id)
+    finally:
+        _sync_compat_audit(agent_loop)
+        if injected_client is not None: agent_loop.client=None
 
-
-def parse_apps(text):
-    matches=list(re.finditer(r"(?:^|\s)(открой|запусти|закрой)\s+", text))
-    if not matches or matches[0].start()!=0: return None
-    actions=[]
-    for i,m in enumerate(matches):
-        end=matches[i+1].start() if i+1<len(matches) else len(text)
-        chunk=re.sub(r"\s+(?:и|а затем|потом)\s*$", "", text[m.end():end].strip(" ,.!?:;"))
-        targets=app_names(chunk)
-        if not targets: return None
-        actions.append(("open" if m.group(1) in {"открой","запусти"} else "close",targets))
-    return actions
-
-
-def run_apps(actions):
-    from capabilities.apps import open_target,close_target
-    lines=[]; done=[]
-    for operation,targets in actions:
-        fn=open_target if operation=="open" else close_target
-        results={}
-        with ThreadPoolExecutor(max_workers=max(1,len(targets))) as pool:
-            futures={pool.submit(fn,t):t for t in targets}
-            for future in as_completed(futures):
-                target=futures[future]
-                try: results[target]=future.result()
-                except Exception as exc: results[target]={"success":False,"error":str(exc)}
-        ok=[]; bad=[]
-        for target in targets:
-            result=results[target]
-            if result.get("success"): ok.append(target); done.append(target)
-            else: bad.append(f"{target}: {result.get('error') or 'не удалось'}")
-        if ok: lines.append(("Открыл" if operation=="open" else "Закрыл")+": "+", ".join(ok)+".")
-        if bad: lines.append("Не удалось: "+"; ".join(bad))
-    return " ".join(lines) or "Не удалось выполнить действие.",done
-
-
-def volume_get():
-    from capabilities.apps import _run
-    result=_run("output volume of (get volume settings)")
-    if result.returncode: raise RuntimeError("не удалось прочитать громкость")
-    return max(0,min(100,int(result.stdout.strip())))
-
-
-def volume_set(value):
-    from capabilities.apps import _run
-    value=max(0,min(100,int(value)))
-    result=_run(f"set volume output volume {value}")
-    if result.returncode: raise RuntimeError("не удалось изменить громкость")
-    return value
-
-
-def conversation(message, session_id):
-    from config import MODEL,create_groq_client
-    with LOCK: history=list(CHAT.get(session_id,[]))[-16:]
-    messages=[{"role":"system","content":SYSTEM},*history,{"role":"user","content":str(message)}]
-    client=create_groq_client()
-    response=client.chat.completions.create(model=MODEL,messages=messages,temperature=0.7,max_completion_tokens=800)
-    answer=str(response.choices[0].message.content or "").strip() or "Не получил ответ."
-    with LOCK:
-        history=CHAT.setdefault(session_id,[])
-        history.extend([{"role":"user","content":str(message)},{"role":"assistant","content":answer}])
-        del history[:-16]
-    return answer
-
-
-def ask(message, session_id="desktop"):
-    raw=str(message or "").strip(); text=norm(raw)
-    if not text: return ""
-    if text in STOP:
-        CONTEXT.pop(session_id,None); return "Остановил."
-    context=CONTEXT.get(session_id,{})
-    if text in {"выключи","поставь на паузу","пауза"} and context.get("kind")=="spotify":
-        from spotify_control import pause
-        return pause()
-    if text=="закрой" and context.get("kind")=="apps" and context.get("target"):
-        return run_apps([("close",[context["target"]])])[0]
-    if text in MORE and context.get("kind")=="spotify":
-        from spotify_control import next_track
-        return next_track()
-    music=re.match(r"^(?:включи|поставь|сыграй)\s+(.+?)\s+(?:на|в)\s+спотифай$",text)
-    if music:
-        from spotify_control import play
-        query=music.group(1).strip(); answer=play(query); remember(session_id,"spotify",query=query); return answer
-    if text in MORE:
-        from spotify_control import next_track
-        return next_track()
-    if re.search(r"^(?:(?:какая|какой|сколько|текущая)\s+)?(?:сейчас\s+)?(?:громкость|уровень звука|звук)(?:\s+сейчас)?$",text): return f"Громкость: {volume_get()}%"
-    match=re.search(r"(?:громкость|звук)(?:\s+на)?\s+(\d{1,3})(?:\s*%|\s*процент\w*)?$",text)
-    if match:
-        value=volume_set(match.group(1)); remember(session_id,"volume",delta=10); return f"Громкость: {value}%"
-    if re.search(r"\b(?:громче|прибавь|увеличь)\b",text):
-        value=volume_set(volume_get()+10); remember(session_id,"volume",delta=10); return f"Громкость: {value}%"
-    if re.search(r"\b(?:тише|убавь|уменьши)\b",text):
-        value=volume_set(volume_get()-10); remember(session_id,"volume",delta=-10); return f"Громкость: {value}%"
-    if re.search(r"(?:выключи|убери)\s+(?:звук|громкость)",text): return f"Громкость: {volume_set(0)}%"
-    actions=parse_apps(text)
-    if actions:
-        answer,done=run_apps(actions)
-        if done: remember(session_id,"apps",target=done[-1])
-        return answer
-    return conversation(raw,session_id)
-
-
-def get_session(session_id="desktop"):
-    with LOCK: return {"session_id":session_id,"history":list(CHAT.get(session_id,[]))}
+def get_session(session_id=None): return _canonical_get_session(session_id)
