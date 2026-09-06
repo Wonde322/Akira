@@ -70,16 +70,12 @@ class BrainWorker(QThread):
                 self.answer_ready.emit("Остановил.")
                 return
             self._queue.put(message)
-        if not self.isRunning():
-            self.start()
 
     def cancel_current(self):
         with self._lock:
             self._generation += 1
         self.busy.emit(False)
         return True
-
-    request_stop = cancel_current
 
     def request_stop(self):
         with self._lock:
