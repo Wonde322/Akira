@@ -22,23 +22,17 @@ _ACTION_FIRST_RULES = """
 - Если пользователь просит выполнить действие на компьютере, сначала ВЫПОЛНИ его
   доступным tool/capability. Текстовая инструкция вместо вызова доступного tool —
   неправильный ответ.
-- Для Spotify-запросов на трек, исполнителя, альбом или музыку используй
-  play_spotify. Не утверждай, что не можешь запустить музыку, пока эта capability
-  не была реально вызвана и самостоятельный recovery не исчерпан.
+- Для медиа-запросов используй соответствующую зарегистрированную capability и
+  сначала попробуй выполнить запрос, а не объяснять пользователю, как сделать его вручную.
 - Отсутствие capability в текущем динамическом срезе tools не означает, что её нет:
   используй discover_capability и продолжай.
 - О реальном ограничении сообщай только после фактической ошибки инструмента и
   попытки самостоятельного recovery.
 """
 
-# Keep the canonical prompt as the source of truth, but harden it against the
-# generic chat-model refusal pattern seen in the desktop client.
 SYSTEM_PROMPT = _agent_loop.SYSTEM_PROMPT + _ACTION_FIRST_RULES
 _agent_loop.SYSTEM_PROMPT = SYSTEM_PROMPT
 SYSTEM=SYSTEM_PROMPT; TOOLS=get_tool_schemas(); client=None
-# Legacy Brain exposes the canonical default history by identity. Clear only on
-# module initialization so reloaded compatibility consumers start clean while
-# normal repeated calls retain conversation state.
 conversation=_canonical_get_session(None).history
 conversation.clear()
 
@@ -88,8 +82,6 @@ class Brain:
 
 def ask(message,session_id=None):
     import agent_loop
-    # Re-apply in case tests or compatibility consumers replaced the canonical
-    # prompt after module import.
     if _ACTION_FIRST_RULES not in agent_loop.SYSTEM_PROMPT:
         agent_loop.SYSTEM_PROMPT += _ACTION_FIRST_RULES
     injected_client=client
