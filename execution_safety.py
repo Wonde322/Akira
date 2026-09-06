@@ -1,10 +1,9 @@
-"""
-Central execution safety gate.
+"""Central execution safety gate.
 
-Uses the existing PermissionManager; does not create a second
-permission system.
+Uses the existing PermissionManager; does not create a second permission system.
 """
 
+from config import PERMISSIONS_FILE
 from permissions import PermissionManager
 
 
@@ -13,82 +12,33 @@ class ExecutionSafetyGate:
         self.permissions = (
             permission_manager
             if permission_manager is not None
-            else PermissionManager()
+            else PermissionManager(PERMISSIONS_FILE)
         )
 
     def check(self, tool_name, arguments=None):
         arguments = arguments or {}
+        level = self.permissions.get_permission(tool_name)
 
-        for method_name in (
-            "get_permission",
-            "get_level",
-            "check",
-            "can_execute",
-        ):
-            method = getattr(self.permissions, method_name, None)
+        if level == "blocked":
+            return {
+                "allowed": False,
+                "requires_confirmation": False,
+                "level": level,
+                "reason": "Tool is blocked by permissions.",
+            }
 
-            if not callable(method):
-                continue
-
-            try:
-                result = method(tool_name)
-            except TypeError:
-                try:
-                    result = method(tool_name, arguments)
-                except Exception as exc:
-                    return {
-                        "allowed": False,
-                        "requires_confirmation": False,
-                        "reason": str(exc),
-                    }
-            except Exception as exc:
-                return {
-                    "allowed": False,
-                    "requires_confirmation": False,
-                    "reason": str(exc),
-                }
-
-            if isinstance(result, dict):
-                level = (
-                    result.get("level")
-                    or result.get("permission")
-                    or result.get("status")
-                )
-
-                allowed = result.get("allowed")
-                if allowed is None:
-                    allowed = level not in {"blocked", "deny", "denied"}
-
-                return {
-                    "allowed": bool(allowed),
-                    "requires_confirmation": level in {
-                        "ask", "confirm", "confirmation"
-                    },
-                    "level": level,
-                    "reason": result.get("reason"),
-                }
-
-            if isinstance(result, bool):
-                return {
-                    "allowed": result,
-                    "requires_confirmation": False,
-                    "level": None,
-                }
-
-            if isinstance(result, str):
-                level = result.lower()
-                return {
-                    "allowed": level not in {"blocked", "deny", "denied"},
-                    "requires_confirmation": level in {
-                        "ask", "confirm", "confirmation"
-                    },
-                    "level": result,
-                }
+        if level == "confirm":
+            return {
+                "allowed": True,
+                "requires_confirmation": True,
+                "level": level,
+                "reason": "User confirmation required.",
+            }
 
         return {
-            "allowed": False,
+            "allowed": True,
             "requires_confirmation": False,
-            "reason": "No compatible permission check method",
+            "level": "auto",
         }
 
     def authorize(self, tool_name, arguments=None, confirmed=False):
