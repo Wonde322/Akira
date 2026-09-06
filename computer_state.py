@@ -13,17 +13,14 @@ from pathlib import Path
 from typing import Any
 
 _CYRILLIC_TO_LATIN = str.maketrans({
-    "а":"a","б":"b","в":"v","г":"g","д":"d","е":"e","ё":"e",
-    "ж":"zh","з":"z","и":"i","й":"y","к":"k","л":"l","м":"m",
-    "н":"n","о":"o","п":"p","р":"r","с":"s","т":"t","у":"u",
-    "ф":"f","х":"h","ц":"c","ч":"ch","ш":"sh","щ":"sch",
-    "ъ":"","ы":"y","ь":"","э":"e","ю":"yu","я":"ya",
+    "а":"a","б":"b","в":"v","г":"g","д":"d","е":"e","ё":"e","ж":"zh","з":"z","и":"i","й":"y",
+    "к":"k","л":"l","м":"m","н":"n","о":"o","п":"p","р":"r","с":"s","т":"t","у":"u","ф":"f",
+    "х":"h","ц":"c","ч":"ch","ш":"sh","щ":"sch","ъ":"","ы":"y","ь":"","э":"e","ю":"yu","я":"ya",
 })
 
 
 def _norm(value: str) -> str:
-    value = unicodedata.normalize("NFKD", str(value or "")).casefold()
-    value = value.translate(_CYRILLIC_TO_LATIN)
+    value = unicodedata.normalize("NFKD", str(value or "")).casefold().translate(_CYRILLIC_TO_LATIN)
     return re.sub(r"[^a-z0-9]+", "", value)
 
 
@@ -50,7 +47,7 @@ class Application:
 
 
 class ApplicationResolver:
-    """Resolve human app references against applications actually installed on Mac."""
+    """Resolve human app references against applications actually registered on Mac."""
 
     def __init__(self) -> None:
         self._cache: list[Application] | None = None
@@ -59,18 +56,22 @@ class ApplicationResolver:
         if self._cache is not None:
             return self._cache
         paths: set[str] = set()
-        for root in ("/Applications", "/System/Applications", str(Path.home() / "Applications")):
-            if not os.path.isdir(root):
-                continue
-            try:
-                result = _run(
-                    ["mdfind", "kMDItemContentType == 'com.apple.application-bundle'", "-onlyin", root],
-                    timeout=4,
-                )
-                if result.returncode == 0:
-                    paths.update(p for p in result.stdout.splitlines() if p.endswith(".app"))
-            except Exception:
-                continue
+        try:
+            result = _run(["mdfind", "kMDItemContentType == 'com.apple.application-bundle'"], timeout=5)
+            if result.returncode == 0:
+                paths.update(p for p in result.stdout.splitlines() if p.endswith(".app"))
+        except Exception:
+            pass
+        if not paths:
+            for root in ("/Applications", "/System/Applications", str(Path.home() / "Applications")):
+                if not os.path.isdir(root):
+                    continue
+                try:
+                    result = _run(["find", root, "-maxdepth", "2", "-name", "*.app", "-type", "d"], timeout=4)
+                    if result.returncode == 0:
+                        paths.update(result.stdout.splitlines())
+                except Exception:
+                    continue
 
         apps: list[Application] = []
         for raw_path in sorted(paths):
