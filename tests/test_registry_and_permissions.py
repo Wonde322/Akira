@@ -6,23 +6,24 @@ ROOT = Path(__file__).resolve().parents[1]
 VALID_PERMISSION_LEVELS = {"auto", "confirm", "blocked"}
 EXISTING_TOOL_NAMES = None
 
+# Explicit desktop policy chosen for the interactive Mac assistant. These actions
+# are reversible/ordinary and must not interrupt the user with confirmation.
+SAFE_DESKTOP_OVERRIDES = {
+    "open", "close", "set_volume", "mute_volume", "key", "select", "click", "type", "scroll", "drag",
+}
+
 
 def test_registry_contains_all_existing_tools_once(isolated_project):
     registry = isolated_project("tool_registry")
     names = [tool.name for tool in registry.TOOL_REGISTRY]
-
     assert names
     assert len(names) == len(set(names))
 
 
-def test_each_registry_entry_has_matching_schema_and_implementation(
-    isolated_project,
-):
+def test_each_registry_entry_has_matching_schema_and_implementation(isolated_project):
     registry = isolated_project("tool_registry")
-
     for tool in registry.TOOL_REGISTRY:
         schema = tool.schema()
-
         assert tool.name
         assert tool.description
         assert tool.parameters["type"] == "object"
@@ -31,112 +32,79 @@ def test_each_registry_entry_has_matching_schema_and_implementation(
         assert callable(tool.implementation())
 
 
-def test_brain_uses_registry_schemas_without_a_manual_implementation_map(
-    isolated_project,
-):
+def test_brain_uses_registry_schemas_without_a_manual_implementation_map(isolated_project):
     brain = isolated_project("brain")
     registry = isolated_project("tool_registry")
-
     assert brain.TOOLS == registry.get_tool_schemas()
     assert not hasattr(brain, "FUNCTIONS")
 
 
 def test_every_registry_tool_has_a_valid_permission_policy(isolated_project):
     registry = isolated_project("tool_registry")
-
-    assert {
-        tool.permission_policy for tool in registry.TOOL_REGISTRY
-    } <= VALID_PERMISSION_LEVELS
-    assert registry.get_default_tool_permissions() == {
-        tool.name: tool.permission_policy for tool in registry.TOOL_REGISTRY
-    }
+    assert {tool.permission_policy for tool in registry.TOOL_REGISTRY} <= VALID_PERMISSION_LEVELS
+    assert registry.get_default_tool_permissions() == {tool.name: tool.permission_policy for tool in registry.TOOL_REGISTRY}
 
 
-def test_committed_permissions_match_registry_defaults(isolated_project):
+def test_committed_permissions_match_registry_with_explicit_safe_desktop_overrides(isolated_project):
     registry = isolated_project("tool_registry")
-    committed_permissions = json.loads(
-        (ROOT / "permissions.json").read_text(encoding="utf-8")
-    )
+    committed = json.loads((ROOT / "permissions.json").read_text(encoding="utf-8"))
+    defaults = registry.get_default_tool_permissions()
+    assert set(committed) == set(defaults)
+    for name, default in defaults.items():
+        if name in SAFE_DESKTOP_OVERRIDES:
+            assert committed[name] == "auto"
+        else:
+            assert committed[name] == default
 
-    assert committed_permissions == registry.get_default_tool_permissions()
 
-
-def test_committed_permissions_contain_no_non_existent_tools(
-    isolated_project,
-):
+def test_committed_permissions_contain_no_non_existent_tools(isolated_project):
     registry = isolated_project("tool_registry")
-    committed_permissions = json.loads(
-        (ROOT / "permissions.json").read_text(encoding="utf-8")
-    )
-
-    registry_names = {
-        tool.name
-        for tool in registry.TOOL_REGISTRY
-    }
-
+    committed_permissions = json.loads((ROOT / "permissions.json").read_text(encoding="utf-8"))
+    registry_names = {tool.name for tool in registry.TOOL_REGISTRY}
     assert set(committed_permissions) <= registry_names
 
 
 def test_default_permissions_are_derived_from_registry(isolated_project):
     permissions = isolated_project("permissions")
     registry = isolated_project("tool_registry")
-
     for tool in registry.TOOL_REGISTRY:
         assert permissions.DEFAULT_PERMISSIONS[tool.name] == tool.permission_policy
-
     assert permissions.get_permission("unknown_tool") == "confirm"
 
 
 def test_no_legacy_independent_tool_lists_remain():
     brain_source = (ROOT / "brain.py").read_text(encoding="utf-8")
     permissions_source = (ROOT / "permissions.py").read_text(encoding="utf-8")
-
     assert "FUNCTIONS =" not in brain_source
     assert "\"open_app\":" not in permissions_source
 
 
-def test_confirm_tool_is_denied_when_context_cannot_prompt(
-    isolated_project, monkeypatch
-):
+def test_confirm_tool_is_denied_when_context_cannot_prompt(isolated_project, monkeypatch):
     brain = isolated_project("brain")
     permissions = isolated_project("permissions")
-
     permissions.set_confirmation_provider(permissions.deny_all)
     monkeypatch.setattr(brain, "get_permission", lambda _: "confirm")
-
     called = []
-    monkeypatch.setattr(
-        brain,
-        "get_tool_implementation",
-        lambda _: lambda: called.append(True),
-    )
-
+    monkeypatch.setattr(brain, "get_tool_implementation", lambda _: lambda: called.append(True))
     result = brain.execute_tool("action", {})
-
     assert result == "Пользователь не разрешил выполнение действия."
     assert called == []
 
 
 def test_confirm_tool_never_auto_becomes_auto(isolated_project):
     registry = isolated_project("tool_registry")
-    committed = json.loads(
-        (ROOT / "permissions.json").read_text(encoding="utf-8")
-    )
-
+    committed = json.loads((ROOT / "permissions.json").read_text(encoding="utf-8"))
     for name, level in registry.get_default_tool_permissions().items():
-        if level == "confirm":
+        if level == "confirm" and name not in SAFE_DESKTOP_OVERRIDES:
             assert committed[name] == "confirm", name
 
 
 def test_permissions_file_path_is_absolute_and_project_root(monkeypatch, tmp_path):
     import importlib
     import sys
-
     sys.modules.pop("permissions", None)
     monkeypatch.chdir(tmp_path)
-
     module = importlib.import_module("permissions")
-
     try:
         assert Path(module.PERMISSIONS_FILE).is_absolute()
         assert Path(module.PERMISSIONS_FILE).parent == ROOT
@@ -146,13 +114,11 @@ def test_permissions_file_path_is_absolute_and_project_root(monkeypatch, tmp_pat
 
 def test_web_server_disables_stdin_confirmation():
     source = (ROOT / "akira_server.py").read_text(encoding="utf-8")
-
     assert "set_confirmation_provider" in source
     assert "deny_all" in source
 
 
 def test_voice_dialogue_disables_stdin_confirmation():
     source = (ROOT / "voice" / "dialogue.py").read_text(encoding="utf-8")
-
     assert "set_confirmation_provider" in source
     assert "deny_all" in source
