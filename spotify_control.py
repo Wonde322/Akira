@@ -9,6 +9,15 @@ CLIENT_ID = "71886dbe05744e1c9ea56d7ffd1eec1c"; API = "https://api.spotify.com/v
 SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 _TOKEN_PATH = Path(SPOTIFY_TOKEN_FILE)
 
+# Natural-language intent words often survive ASR and should not become part
+# of the Spotify search query.  This keeps "включи исполнителя X" equivalent
+# to "включи X" without adding an application-specific command router.
+_QUERY_PREFIXES = (
+    "исполнитель ", "исполнителя ", "песню ", "трек ", "альбом ",
+    "музыку ", "артиста ", "артист ",
+)
+
+
 def load_token():
     return json.loads(_TOKEN_PATH.read_text(encoding="utf-8"))
 
@@ -50,6 +59,14 @@ def api(method, endpoint, token, data=None, retry=True):
         raise RuntimeError(f"Spotify API {exc.code}: {exc.read().decode(errors='replace')}")
 
 def _norm(value): return " ".join(str(value or "").casefold().replace("ё", "е").split())
+
+def _clean_query(query):
+    value = " ".join(str(query or "").strip().split())
+    normalized = value.casefold().replace("ё", "е")
+    for prefix in _QUERY_PREFIXES:
+        if normalized.startswith(prefix):
+            return value[len(prefix):].strip()
+    return value
 
 def _activate_desktop():
     subprocess.Popen(["open", "-a", "Spotify"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -93,7 +110,7 @@ def pause(): return _control("/me/player/pause", "Остановил Spotify.")
 def next_track(): return _control("/me/player/next", "Следующий трек.")
 
 def play(query):
-    query = str(query or "").strip()
+    query = _clean_query(query)
     if not query: return "Не указано, что включить."
     try:
         token = ensure_token(); kind, item = _search(query, token)

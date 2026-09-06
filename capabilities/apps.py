@@ -6,9 +6,28 @@ import subprocess
 from pathlib import Path
 
 
-# Compatibility injection point used by the macOS capability tests and by the
-# real backend when available.  It is deliberately optional on non-macOS hosts.
 backend = None
+
+
+# Speech/LLM input commonly contains colloquial Russian names.  Normalize them
+# at the capability boundary so the universal open/close primitives do not
+# depend on the model spelling the installed application exactly.
+_APP_ALIASES = {
+    "telegram": "Telegram",
+    "телеграм": "Telegram",
+    "телеграмм": "Telegram",
+    "тг": "Telegram",
+    "тгшка": "Telegram",
+    "телега": "Telegram",
+    "spotify": "Spotify",
+    "споти": "Spotify",
+    "спотик": "Spotify",
+    "спотифай": "Spotify",
+    "спотифай": "Spotify",
+    "хром": "Google Chrome",
+    "chrome": "Google Chrome",
+    "гугл хром": "Google Chrome",
+}
 
 
 def _ok(data=None, **extra):
@@ -29,7 +48,9 @@ def _fail(error, data=None, **extra):
 
 def _name(value):
     value = str(value or "").strip()
-    return os.path.basename(value)[:-4] if value.endswith(".app") else value
+    if value.endswith(".app"):
+        value = os.path.basename(value)[:-4]
+    return _APP_ALIASES.get(value.casefold(), value)
 
 
 def _quote(value):
@@ -72,7 +93,6 @@ def open_target(target):
     if not raw or not isinstance(target, (str, Path)):
         return _fail("invalid_target")
 
-    # URL: open directly, never force an application-specific route.
     if raw.startswith(("http://", "https://")):
         try:
             result = subprocess.run(["open", raw], text=True, capture_output=True, timeout=4)
