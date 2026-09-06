@@ -28,6 +28,15 @@ def test_fast_open_does_not_enter_llm(monkeypatch):
     assert result["response"] == "Открыл Spotify."
 
 
+def test_fast_open_accepts_wake_prefix(monkeypatch):
+    monkeypatch.setattr(fast_commands, "open_target", lambda target: {
+        "success": True,
+        "data": {"application": "Spotify"},
+    })
+    result = fast_commands.handle("Акира, открой спотик")
+    assert result["response"] == "Открыл Spotify."
+
+
 def test_fast_close_does_not_use_shell(monkeypatch):
     monkeypatch.setattr(fast_commands, "close_target", lambda target: {
         "success": True,
