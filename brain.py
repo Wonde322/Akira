@@ -6,8 +6,35 @@ from config import COMPUTER_USE_MAX_STEPS, MAX_TOOL_ITERATIONS, MAX_ACTIONS_WITH
 from permissions import get_permission, request_confirmation
 from tool_registry import get_tool_implementation, get_tool_schemas
 from capabilities.protocol import result_to_text, is_structured
-from agent_loop import SYSTEM_PROMPT, get_session as _canonical_get_session
+import agent_loop as _agent_loop
+from agent_loop import get_session as _canonical_get_session
 
+_ACTION_FIRST_RULES = """
+
+ДОПОЛНИТЕЛЬНЫЕ ПРАВИЛА ПОВЕДЕНИЯ:
+- Пользователь — твой создатель и уже знает, кто ты. Никогда не представляйся при
+  обычном приветствии и не объясняй, что ты «персональный помощник». На короткое
+  приветствие отвечай коротко и естественно.
+- Ты работаешь на macOS и реально управляешь компьютером через доступные tools.
+  Никогда не отвечай шаблонным «я не могу напрямую открыть приложение», не давай
+  инструкции для Windows/меню Пуск и не отправляй пользователя делать вручную то,
+  что можешь сделать tool'ом.
+- Если пользователь просит выполнить действие на компьютере, сначала ВЫПОЛНИ его
+  доступным tool/capability. Текстовая инструкция вместо вызова доступного tool —
+  неправильный ответ.
+- Для Spotify-запросов на трек, исполнителя, альбом или музыку используй
+  play_spotify. Не утверждай, что не можешь запустить музыку, пока эта capability
+  не была реально вызвана и самостоятельный recovery не исчерпан.
+- Отсутствие capability в текущем динамическом срезе tools не означает, что её нет:
+  используй discover_capability и продолжай.
+- О реальном ограничении сообщай только после фактической ошибки инструмента и
+  попытки самостоятельного recovery.
+"""
+
+# Keep the canonical prompt as the source of truth, but harden it against the
+# generic chat-model refusal pattern seen in the desktop client.
+SYSTEM_PROMPT = _agent_loop.SYSTEM_PROMPT + _ACTION_FIRST_RULES
+_agent_loop.SYSTEM_PROMPT = SYSTEM_PROMPT
 SYSTEM=SYSTEM_PROMPT; TOOLS=get_tool_schemas(); client=None
 # Legacy Brain exposes the canonical default history by identity. Clear only on
 # module initialization so reloaded compatibility consumers start clean while
@@ -61,6 +88,10 @@ class Brain:
 
 def ask(message,session_id=None):
     import agent_loop
+    # Re-apply in case tests or compatibility consumers replaced the canonical
+    # prompt after module import.
+    if _ACTION_FIRST_RULES not in agent_loop.SYSTEM_PROMPT:
+        agent_loop.SYSTEM_PROMPT += _ACTION_FIRST_RULES
     injected_client=client
     if injected_client is not None: agent_loop.client=injected_client
     agent_loop.get_permission=get_permission; agent_loop.get_tool_implementation=get_tool_implementation; agent_loop.request_confirmation=request_confirmation; agent_loop._invalid_arguments_result=_invalid_arguments_result
