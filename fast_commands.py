@@ -32,20 +32,14 @@ def _target_after(text: str, patterns: tuple[str, ...]) -> str | None:
 
 def _set_volume(level: int) -> str:
     level = max(0, min(100, int(level)))
-    result = subprocess.run(
-        ["osascript", "-e", f"set volume output volume {level}"],
-        text=True,
-        capture_output=True,
-        timeout=2,
-    )
+    result = subprocess.run(["osascript", "-e", f"set volume output volume {level}"], text=True, capture_output=True, timeout=2)
     return f"Громкость: {level}%." if result.returncode == 0 else "Не удалось изменить громкость."
 
 
 def _adjust_volume(direction: str, step: int = 10) -> str:
     state = volume()
     old = int(state.get("level", 0))
-    delta = step if direction == "up" else -step
-    return _set_volume(old + delta)
+    return _set_volume(old + (step if direction == "up" else -step))
 
 
 def _format_apps() -> str:
@@ -62,20 +56,24 @@ def _format_network() -> str:
     return "Не удалось определить текущее сетевое подключение."
 
 
-def _device_count(data: Any) -> int:
-    def walk(value: Any) -> int:
+def _device_names(data: Any) -> list[str]:
+    names: list[str] = []
+
+    def walk(value: Any) -> None:
         if isinstance(value, dict):
-            count = 0
             for key, child in value.items():
-                if isinstance(child, list) and any(k in str(key).casefold() for k in ("device", "device_list", "devices")):
-                    count += len(child)
+                if key in {"_name", "name"} and isinstance(child, str) and child.strip():
+                    candidate = child.strip()
+                    if candidate not in names and len(candidate) < 120:
+                        names.append(candidate)
                 else:
-                    count += walk(child)
-            return count
-        if isinstance(value, list):
-            return sum(walk(item) for item in value)
-        return 0
-    return walk(data)
+                    walk(child)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item)
+
+    walk(data)
+    return names
 
 
 def handle(text: str) -> dict[str, Any] | None:
@@ -91,9 +89,7 @@ def handle(text: str) -> dict[str, Any] | None:
     if not text:
         return {"handled": True, "response": "Да?", "action": "wake"}
 
-    target = _target_after(text, (
-        r"^(?:открой|открывай|запусти|запускай|запуск)\s+(.+)$",
-    ))
+    target = _target_after(text, (r"^(?:открой|открывай|запусти|запускай|запуск)\s+(.+)$",))
     if target and not re.match(r"^(?:музыку|песню|трек|ютуб|youtube)\b", target, re.I):
         result = open_target(target)
         if result.get("success"):
@@ -101,9 +97,7 @@ def handle(text: str) -> dict[str, Any] | None:
             return {"handled": True, "response": f"Открыл {app}.", "action": "open", "result": result}
         return {"handled": True, "response": f"Не нашёл приложение «{target}».", "action": "open", "result": result}
 
-    target = _target_after(text, (
-        r"^(?:закрой|закрывай|выйди\s+из|заверши)\s+(.+)$",
-    ))
+    target = _target_after(text, (r"^(?:закрой|закрывай|выйди\s+из|заверши)\s+(.+)$",))
     if target:
         result = close_target(target)
         if result.get("success"):
@@ -134,9 +128,13 @@ def handle(text: str) -> dict[str, Any] | None:
     if re.search(r"(?:что|какие).*подключ|(?:подключено|подключены).*устройства|устройства.*подключ", text, re.I):
         bt = bluetooth_devices()
         audio = audio_devices()
+        bt_names = _device_names(bt)
+        audio_names = _device_names(audio)
+        bt_text = ", ".join(bt_names[:8]) if bt_names else "не определены"
+        audio_text = ", ".join(audio_names[:8]) if audio_names else "не определены"
         return {
             "handled": True,
-            "response": f"Bluetooth-устройств: {_device_count(bt)}; аудиоустройств: {_device_count(audio)}.",
+            "response": f"Bluetooth: {bt_text}. Аудио: {audio_text}.",
             "action": "devices",
             "result": {"bluetooth": bt, "audio": audio},
         }
