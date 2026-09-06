@@ -7,6 +7,7 @@ from typing import Any
 
 from app_control import close_target, open_target
 from computer_state import audio_devices, bluetooth_devices, frontmost_app, network, running_apps, volume
+from permissions import get_permission
 
 _GREETING = re.compile(r"^(?:привет|приветик|здарова|здорово|здравствуй|хай|hello|hi)[!. ]*$", re.I)
 _WAKE_PREFIX = re.compile(r"^(?:эй\s+)?акира\s*[,!:\-]?\s*|^(?:hey\s+akira)\s*[,!:\-]?\s*", re.I)
@@ -30,13 +31,20 @@ def _target_after(text: str, patterns: tuple[str, ...]) -> str | None:
     return None
 
 
-def _set_volume(level: int) -> str:
+def _fast_allowed(tool_name: str) -> bool:
+    """Use the same persistent permission policy as the canonical executor."""
+    return get_permission(tool_name) == "auto"
+
+
+def _set_volume(level: int) -> str | None:
+    if not _fast_allowed("set_volume"):
+        return None
     level = max(0, min(100, int(level)))
     result = subprocess.run(["osascript", "-e", f"set volume output volume {level}"], text=True, capture_output=True, timeout=2)
     return f"Громкость: {level}%." if result.returncode == 0 else "Не удалось изменить громкость."
 
 
-def _adjust_volume(direction: str, step: int = 10) -> str:
+def _adjust_volume(direction: str, step: int = 10) -> str | None:
     state = volume()
     old = int(state.get("level", 0))
     return _set_volume(old + (step if direction == "up" else -step))
@@ -91,6 +99,8 @@ def handle(text: str) -> dict[str, Any] | None:
 
     target = _target_after(text, (r"^(?:открой|открывай|запусти|запускай|запуск)\s+(.+)$",))
     if target and not re.match(r"^(?:музыку|песню|трек|ютуб|youtube)\b", target, re.I):
+        if not _fast_allowed("open"):
+            return None
         result = open_target(target)
         if result.get("success"):
             app = result.get("data", {}).get("application") or target
@@ -99,6 +109,8 @@ def handle(text: str) -> dict[str, Any] | None:
 
     target = _target_after(text, (r"^(?:закрой|закрывай|выйди\s+из|заверши)\s+(.+)$",))
     if target:
+        if not _fast_allowed("close"):
+            return None
         result = close_target(target)
         if result.get("success"):
             app = result.get("data", {}).get("application") or target
@@ -107,20 +119,30 @@ def handle(text: str) -> dict[str, Any] | None:
             return {"handled": True, "response": f"{target} сейчас не запущен.", "action": "close", "result": result}
         return {"handled": True, "response": f"Не удалось закрыть {target}.", "action": "close", "result": result}
 
-    if re.search(r"(?:какая|сколько|уровень).*громк|громкость.*(?:сейчас|какая|сколько)|(?:какая|сколько).*звук", text, re.I):
+    if re.search(r"(?:какая|сколько|уровень).*громк|громкость.*(?:сейчас|какая|сколько)|(?:какая|сколько).*звук", text, re.I) or re.fullmatch(r"громкость[!. ]*", text, re.I):
         state = volume()
         muted = " (звук выключен)" if state.get("muted") else ""
         return {"handled": True, "response": f"Громкость: {state.get('level', 0)}%{muted}.", "action": "volume_get", "result": state}
 
     if re.search(r"(?:сделай|снизь|уменьши|потише|тише)\b", text, re.I) or re.fullmatch(r"тише[!. ]*", text, re.I):
-        return {"handled": True, "response": _adjust_volume("down"), "action": "volume_down"}
+        response = _adjust_volume("down")
+        return None if response is None else {"handled": True, "response": response, "action": "volume_down"}
     if re.search(r"(?:сделай|увеличь|прибавь|погромче|громче)\b", text, re.I) or re.fullmatch(r"громче[!. ]*", text, re.I):
-        return {"handled": True, "response": _adjust_volume("up"), "action": "volume_up"}
+        response = _adjust_volume("up")
+        return None if response is None else {"handled": True, "response": response, "action": "volume_up"}
 
     match = re.search(r"(?:громкость|звук)\s*(?:на|до)\s*(\d{1,3})", text, re.I)
     if match:
-        level = int(match.group(1))
-        return {"handled": True, "response": _set_volume(level), "action": "volume_set", "result": {"level": max(0, min(100, level))}}
+        response = _set_volume(int(match.group(1)))
+        return None if response is None else {"handled": True, "response": response, "action": "volume_set"}
+
+    if re.search(r"(?:выключи|отключи|замьючь|мут)\s+(?:звук|микрофон)", text, re.I):
+        if not _fast_allowed("mute_volume"):
+            return None
+        result = subprocess.run(["osascript", "-e", "set volume with output muted"], text=True, capture_output=True, timeout=2)
+        if result.returncode == 0:
+            return {"handled": True, "response": "Звук выключен.", "action": "mute_volume"}
+        return {"handled": True, "response": "Не удалось выключить звук.", "action": "mute_volume"}
 
     if re.search(r"(?:какая|какой|что).*сеть|(?:к|какой).*wifi|(?:какой|какая).*вай.?фай|интернет.*(?:сеть|подключ)", text, re.I):
         return {"handled": True, "response": _format_network(), "action": "network"}
@@ -132,12 +154,7 @@ def handle(text: str) -> dict[str, Any] | None:
         audio_names = _device_names(audio)
         bt_text = ", ".join(bt_names[:8]) if bt_names else "не определены"
         audio_text = ", ".join(audio_names[:8]) if audio_names else "не определены"
-        return {
-            "handled": True,
-            "response": f"Bluetooth: {bt_text}. Аудио: {audio_text}.",
-            "action": "devices",
-            "result": {"bluetooth": bt, "audio": audio},
-        }
+        return {"handled": True, "response": f"Bluetooth: {bt_text}. Аудио: {audio_text}.", "action": "devices", "result": {"bluetooth": bt, "audio": audio}}
 
     if re.search(r"(?:что|какие).*запущ|(?:открытые|запущенные).*приложения|какие.*приложения", text, re.I):
         return {"handled": True, "response": _format_apps(), "action": "running_apps"}
