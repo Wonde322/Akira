@@ -1,8 +1,4 @@
-"""Authoritative macOS computer state and native application discovery.
-
-Facts that macOS already knows are resolved here without the LLM or screenshot
-interpretation: applications, frontmost app, volume, network and devices.
-"""
+"""Authoritative macOS computer state and native application discovery."""
 from __future__ import annotations
 
 import json
@@ -54,12 +50,7 @@ class Application:
 
 
 class ApplicationResolver:
-    """Resolve human app references against applications actually installed on Mac.
-
-    There is no per-application alias table. Russian colloquialisms are matched
-    through phonetic normalization and fuzzy/subsequence matching against real
-    application names discovered from the system.
-    """
+    """Resolve human app references against applications actually installed on Mac."""
 
     def __init__(self) -> None:
         self._cache: list[Application] | None = None
@@ -97,21 +88,16 @@ class ApplicationResolver:
 
     def running(self) -> list[Application]:
         try:
-            raw = _osascript(
-                'tell application "System Events" to get name of every process whose background only is false'
-            )
+            raw = _osascript('tell application "System Events" to get name of every process whose background only is false')
         except Exception:
             return []
         names = [n.strip() for n in re.split(r",\s*", raw) if n.strip()]
-        installed = self._installed()
-        by_name = {_norm(app.name): app for app in installed}
+        by_name = {_norm(app.name): app for app in self._installed()}
         return [by_name.get(_norm(name), Application(name=name, path="")) for name in names]
 
     def frontmost(self) -> Application | None:
         try:
-            name = _osascript(
-                'tell application "System Events" to get name of first process whose frontmost is true'
-            )
+            name = _osascript('tell application "System Events" to get name of first process whose frontmost is true')
         except Exception:
             return None
         for app in self._installed():
@@ -126,19 +112,13 @@ class ApplicationResolver:
         path = Path(raw).expanduser()
         if path.suffix == ".app" and path.exists():
             return Application(name=path.stem, path=str(path))
-
         candidates = self.running() if running_only else self._installed()
         q = _norm(raw.removesuffix(".app"))
         if not q:
             return None
-
-        exact = [
-            app for app in candidates
-            if q in {_norm(app.name), _norm(Path(app.path).stem), _norm(app.bundle_id)}
-        ]
+        exact = [app for app in candidates if q in {_norm(app.name), _norm(Path(app.path).stem), _norm(app.bundle_id)}]
         if exact:
             return exact[0]
-
         scored: list[tuple[float, Application]] = []
         for app in candidates:
             n = app.normalized
@@ -147,19 +127,15 @@ class ApplicationResolver:
             ratio = SequenceMatcher(None, q, n).ratio()
             subseq = 1.0 if _is_subsequence(q, n) else 0.0
             prefix = 1.0 if n.startswith(q) or q.startswith(n) else 0.0
-            score = max(ratio, 0.88 * subseq, 0.95 * prefix)
-            scored.append((score, app))
+            scored.append((max(ratio, 0.88 * subseq, 0.95 * prefix), app))
         scored.sort(key=lambda item: item[0], reverse=True)
         if not scored:
             return None
-
         best, app = scored[0]
         second = scored[1][0] if len(scored) > 1 else 0.0
         threshold = 0.70 if len(q) >= 4 else 0.86
         margin = 0.04 if len(q) < 4 else 0.02
-        if best >= threshold and best - second >= margin:
-            return app
-        return None
+        return app if best >= threshold and best - second >= margin else None
 
 
 def _is_subsequence(short: str, long: str) -> bool:
@@ -174,15 +150,11 @@ def volume() -> dict[str, Any]:
         if ":" not in part:
             continue
         key, value = part.split(":", 1)
-        key, value = key.strip(), value.strip()
         try:
-            data[key] = int(value)
+            data[key.strip()] = int(value.strip())
         except ValueError:
-            data[key] = value
-    return {
-        "level": int(data.get("output volume", 0)),
-        "muted": str(data.get("output muted", "false")).casefold() == "true",
-    }
+            data[key.strip()] = value.strip()
+    return {"level": int(data.get("output volume", 0)), "muted": str(data.get("output muted", "false")).casefold() == "true"}
 
 
 def frontmost_app() -> dict[str, Any]:
@@ -191,10 +163,7 @@ def frontmost_app() -> dict[str, Any]:
 
 
 def running_apps() -> list[dict[str, str]]:
-    return [
-        {"name": app.name, "path": app.path, "bundle_id": app.bundle_id}
-        for app in ApplicationResolver().running()
-    ]
+    return [{"name": app.name, "path": app.path, "bundle_id": app.bundle_id} for app in ApplicationResolver().running()]
 
 
 def network() -> dict[str, Any]:
@@ -205,16 +174,15 @@ def network() -> dict[str, Any]:
         interface = match.group(1) if match else ""
     except Exception:
         pass
-
     wifi = ""
     if interface:
         try:
             result = _run(["networksetup", "-getairportnetwork", interface], timeout=1.5)
             if result.returncode == 0:
-                wifi = result.stdout.split(":", 1)[-1].strip()
+                match = re.search(r"(?:Current Wi-Fi Network|Current WiFi Network):\s*(.+)", result.stdout.strip(), re.I)
+                wifi = match.group(1).strip() if match else ""
         except Exception:
             pass
-
     return {"interface": interface, "wifi": wifi}
 
 
@@ -237,11 +205,4 @@ def bluetooth_devices() -> dict[str, Any]:
 
 
 def snapshot() -> dict[str, Any]:
-    return {
-        "frontmost_app": frontmost_app(),
-        "running_apps": running_apps(),
-        "volume": volume(),
-        "network": network(),
-        "audio_devices": audio_devices(),
-        "bluetooth_devices": bluetooth_devices(),
-    }
+    return {"frontmost_app": frontmost_app(), "running_apps": running_apps(), "volume": volume(), "network": network(), "audio_devices": audio_devices(), "bluetooth_devices": bluetooth_devices()}
