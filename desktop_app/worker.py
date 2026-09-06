@@ -7,6 +7,17 @@ import threading
 from PySide6.QtCore import QThread, Signal
 
 _STOP_WORDS = {"стоп", "остановись", "отмена", "отмени", "хватит", "stop", "cancel"}
+_GREETING_WORDS = {"привет", "приветик", "здарова", "здорово", "здравствуй", "хай", "hello", "hi"}
+
+
+def _simple_greeting(message):
+    """Backward-compatible helper; the live worker now routes through Gateway."""
+    normalized = str(message or "").strip().casefold().strip(" .,!?:;—-")
+    if normalized in _GREETING_WORDS:
+        return "Привет."
+    if normalized in {"акира", "эй акира", "akira", "hey akira"}:
+        return "Да?"
+    return None
 
 
 def _friendly_error(error):
