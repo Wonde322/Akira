@@ -1,130 +1,47 @@
-"""
-ЭТАП 18/20 — Capability Discovery.
-Адаптер поверх существующего ToolDefinition.
-"""
+"""Runtime adapter for Akira's canonical capability discovery."""
 
-from tool_registry import ToolDefinition
+from capabilities.discovery import discover_capability
 
 
 class CapabilityDiscovery:
+    """Thin adapter; the canonical discovery algorithm remains in capabilities.discovery."""
 
-    def __init__(self, registry=None):
-        self.registry = registry if registry is not None else ToolDefinition()
-
-    def _collect_tools(self):
-        registry = self.registry
-
-        # Сначала пробуем существующие публичные методы.
-        for method_name in (
-            "list_tools",
-            "get_all_tools",
-            "all_tools",
-            "tools",
-            "list",
-        ):
-            method = getattr(registry, method_name, None)
-
-            if callable(method):
-                try:
-                    result = method()
-                except TypeError:
-                    continue
-
-                if isinstance(result, dict):
-                    return result
-
-                if isinstance(result, (list, tuple)):
-                    return {
-                        getattr(item, "name", str(index)): item
-                        for index, item in enumerate(result)
-                    }
-
-        # Затем существующие поля.
-        for attr in ("tools", "_tools", "registry", "_registry"):
-            value = getattr(registry, attr, None)
-
-            if isinstance(value, dict):
-                return value
-
-            if isinstance(value, (list, tuple)):
-                return {
-                    getattr(item, "name", str(index)): item
-                    for index, item in enumerate(value)
-                }
-
-        return {}
-
-    def list_capabilities(self):
-        result = []
-
-        for name, tool in self._collect_tools().items():
-            if isinstance(tool, dict):
-                description = (
-                    tool.get("description")
-                    or tool.get("help")
-                    or ""
-                )
-            else:
-                description = (
-                    getattr(tool, "description", None)
-                    or getattr(tool, "help", None)
-                    or ""
-                )
-
-            result.append({
-                "name": str(name),
-                "description": str(description),
-            })
-
-        return result
-
-    def discover(self, query):
-        words = {
-            word.lower()
-            for word in str(query).replace("_", " ").split()
-            if len(word) > 1
-        }
-
-        matches = []
-
-        for capability in self.list_capabilities():
-            searchable = (
-                capability["name"] + " " +
-                capability["description"]
-            ).lower()
-
-            score = sum(
-                1 for word in words
-                if word in searchable
+    def choose(self, request):
+        if isinstance(request, dict):
+            query = (
+                request.get("query")
+                or request.get("goal")
+                or request.get("text")
+                or ""
             )
+            limit = request.get("limit", 8)
+        else:
+            query = str(request or "")
+            limit = 8
 
-            if score > 0:
-                matches.append({
-                    **capability,
-                    "score": score,
-                })
+        result = discover_capability(query, limit=limit)
+        data = result.get("data") or {}
+        tools = data.get("tools") or []
 
-        return sorted(
-            matches,
-            key=lambda item: item["score"],
-            reverse=True,
-        )
-
-    def choose(self, query):
-        matches = self.discover(query)
-
-        if not matches:
+        if not tools:
             return {
                 "success": False,
                 "capability": None,
                 "alternatives": [],
+                "output": result.get("output"),
             }
 
         return {
             "success": True,
-            "capability": matches[0]["name"],
-            "alternatives": [
-                item["name"]
-                for item in matches[1:5]
-            ],
+            "capability": tools[0]["name"],
+            "alternatives": [item["name"] for item in tools[1:5]],
+            "tools": tools,
+            "output": result.get("output"),
         }
+
+    def discover(self, query, limit=8):
+        return discover_capability(query, limit=limit)
+
+    def list_capabilities(self):
+        result = discover_capability("", limit=12)
+        return (result.get("data") or {}).get("tools") or []
