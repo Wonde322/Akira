@@ -3,10 +3,21 @@ from __future__ import annotations
 
 import queue
 import threading
+
 from PySide6.QtCore import QThread, Signal
 
 _STOP_WORDS = {"стоп", "остановись", "отмена", "отмени", "хватит", "stop", "cancel"}
 _GREETING_WORDS = {"привет", "приветик", "здарова", "здорово", "здравствуй", "хай", "hello", "hi"}
+
+
+def _simple_greeting(message):
+    """Backward-compatible helper; the live worker now routes through Gateway."""
+    normalized = str(message or "").strip().casefold().strip(" .,!?:;—-")
+    if normalized in _GREETING_WORDS:
+        return "Привет."
+    if normalized in {"акира", "эй акира", "akira", "hey akira"}:
+        return "Да?"
+    return None
 
 
 def _friendly_error(error):
@@ -19,19 +30,17 @@ def _friendly_error(error):
     return f"Не удалось выполнить запрос: {text}" if text else "Не удалось выполнить запрос."
 
 
-def _simple_greeting(message):
-    """Return a terse local greeting for a pure greeting, otherwise None.
-
-    This avoids wasting an LLM round-trip and, more importantly, prevents a
-    generic assistant introduction from appearing every time the creator says
-    hello. Compound messages ("привет, открой Spotify") still go to the brain.
-    """
-    normalized = str(message or "").strip().casefold().strip(" .,!?:;—-")
-    if normalized in _GREETING_WORDS:
-        return "Привет."
-    if normalized in {"акира", "эй акира", "akira", "hey akira"}:
-        return "Да?"
-    return None
+def _response_text(result):
+    if isinstance(result, dict):
+        if result.get("response"):
+            return str(result["response"])
+        if result.get("output"):
+            return str(result["output"])
+        if result.get("answer"):
+            return str(result["answer"])
+        if result.get("error"):
+            return _friendly_error(result["error"])
+    return str(result or "Не получил ответ.")
 
 
 class BrainWorker(QThread):
@@ -58,53 +67,73 @@ class BrainWorker(QThread):
         with self._lock:
             pending = []
             while True:
-                try: item = self._queue.get_nowait()
-                except queue.Empty: break
-                if item is not None: pending.append(item)
-            self._stop = False; self._stop_event.clear(); self._generation += 1
-            for item in pending: self._queue.put(item)
+                try:
+                    item = self._queue.get_nowait()
+                except queue.Empty:
+                    break
+                if item is not None:
+                    pending.append(item)
+            self._stop = False
+            self._stop_event.clear()
+            self._generation += 1
+            for item in pending:
+                self._queue.put(item)
 
     def submit(self, message):
-        if message is None: return
+        if message is None:
+            return
         message = str(message).strip()
-        if not message: return
+        if not message:
+            return
         with self._lock:
             self._generation += 1
             if self._stop_word(message):
-                self._stop = True; self._stop_event.set(); self._queue.put(None)
-                self.busy.emit(False); self.answer_ready.emit("Остановил."); return
+                self._stop = True
+                self._stop_event.set()
+                self._queue.put(None)
+                self.busy.emit(False)
+                self.answer_ready.emit("Остановил.")
+                return
             self._queue.put(message)
 
     def cancel_current(self):
-        with self._lock: self._generation += 1
-        self.busy.emit(False); return True
+        with self._lock:
+            self._generation += 1
+        self.busy.emit(False)
+        return True
 
     def request_stop(self):
         with self._lock:
-            self._generation += 1; self._stop = True; self._stop_event.set(); self._queue.put(None)
+            self._generation += 1
+            self._stop = True
+            self._stop_event.set()
+            self._queue.put(None)
         self.busy.emit(False)
 
     def run(self):
         self._prepare_start()
         while True:
-            try: message = self._queue.get(timeout=0.1)
-            except queue.Empty:
-                if self._stop_event.is_set(): return
-                continue
-            if message is None: return
-            with self._lock: generation = self._generation
-            self.busy.emit(True)
-            greeting = _simple_greeting(message)
-            if greeting is not None:
-                if generation == self._generation:
-                    self.answer_ready.emit(greeting); self.busy.emit(False)
-                continue
             try:
-                from brain import ask
-                answer = ask(message, session_id=self.session_id)
+                message = self._queue.get(timeout=0.1)
+            except queue.Empty:
+                if self._stop_event.is_set():
+                    return
+                continue
+            if message is None:
+                return
+            with self._lock:
+                generation = self._generation
+            self.busy.emit(True)
+            try:
+                from akira_gateway import create_gateway
+                gateway = create_gateway()
+                result = gateway.submit_text(message, metadata={"session_id": self.session_id})
+                answer = _response_text(result)
             except Exception as exc:
                 if generation == self._generation:
-                    self.error.emit(_friendly_error(exc)); self.busy.emit(False)
+                    self.error.emit(_friendly_error(exc))
+                    self.busy.emit(False)
                 continue
             if generation == self._generation:
-                self.answer_ready.emit(str(answer or "Не получил ответ.")); self.busy.emit(False)
+                self.answer_ready.emit(answer)
+                self.busy.emit(False)
