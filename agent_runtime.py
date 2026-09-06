@@ -37,11 +37,20 @@ def _install_cancellation_guards(agent_loop):
 
 
 def _run_agent_turn(goal, session_id=None):
+    """Execute a turn through the public Gateway -> Runtime -> Brain path."""
     raise_if_execution_cancelled()
+
     import agent_loop
     _install_cancellation_guards(agent_loop)
-    from brain import ask
-    result = ask(goal, session_id=session_id)
+
+    from akira_gateway import create_gateway
+
+    gateway = create_gateway()
+    result = gateway.submit_text(
+        goal,
+        metadata={"session_id": session_id} if session_id else None,
+    )
+
     raise_if_execution_cancelled()
     return result
 
