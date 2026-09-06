@@ -6,6 +6,7 @@ import threading
 from PySide6.QtCore import QThread, Signal
 
 _STOP_WORDS = {"стоп", "остановись", "отмена", "отмени", "хватит", "stop", "cancel"}
+_GREETING_WORDS = {"привет", "приветик", "здарова", "здорово", "здравствуй", "хай", "hello", "hi"}
 
 
 def _friendly_error(error):
@@ -16,6 +17,21 @@ def _friendly_error(error):
     if "denied" in lowered or "запрещ" in lowered:
         return "Действие не разрешено."
     return f"Не удалось выполнить запрос: {text}" if text else "Не удалось выполнить запрос."
+
+
+def _simple_greeting(message):
+    """Return a terse local greeting for a pure greeting, otherwise None.
+
+    This avoids wasting an LLM round-trip and, more importantly, prevents a
+    generic assistant introduction from appearing every time the creator says
+    hello. Compound messages ("привет, открой Spotify") still go to the brain.
+    """
+    normalized = str(message or "").strip().casefold().strip(" .,!?:;—-")
+    if normalized in _GREETING_WORDS:
+        return "Привет."
+    if normalized in {"акира", "эй акира", "akira", "hey akira"}:
+        return "Да?"
+    return None
 
 
 class BrainWorker(QThread):
@@ -78,6 +94,11 @@ class BrainWorker(QThread):
             if message is None: return
             with self._lock: generation = self._generation
             self.busy.emit(True)
+            greeting = _simple_greeting(message)
+            if greeting is not None:
+                if generation == self._generation:
+                    self.answer_ready.emit(greeting); self.busy.emit(False)
+                continue
             try:
                 from brain import ask
                 answer = ask(message, session_id=self.session_id)
