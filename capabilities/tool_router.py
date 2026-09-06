@@ -7,12 +7,21 @@ import re
 _STOPWORDS = {"и","или","а","но","что","это","как","мне","ты","я","в","на","из","по","для","с","со","у","к","от","до","the","a","an","and","or","to","of","for","in","on","with","is","it","my","me","please"}
 ALIASES = {
     "открой":{"open","launch","app","url"}, "открыть":{"open","launch","app","url"}, "запусти":{"open","launch","app","shell","execute","command"}, "запустить":{"open","launch","app","shell","execute","command"},
-    "закрой":{"close","quit","app"}, "закрыть":{"close","quit","app"}, "найди":{"find","search"}, "найти":{"find","search"}, "поиск":{"find","search"},
+    "закрой":{"close","quit","app"}, "закрыть":{"close","quit","app"}, "закройся":{"close","quit","app"}, "найди":{"find","search"}, "найти":{"find","search"}, "поиск":{"find","search"},
     "файл":{"file","filesystem","read","write","create"}, "файлы":{"file","filesystem","read","write","create"}, "прочитай":{"read","file"}, "прочитать":{"read","file"}, "запиши":{"write","file"}, "записать":{"write","file"}, "создай":{"create","write","file"}, "создать":{"create","write","file"},
     "перемести":{"move","file"}, "переместить":{"move","file"}, "скопируй":{"copy","file"}, "скопировать":{"copy","file"}, "переименуй":{"rename","file"}, "переименовать":{"rename","file"}, "удали":{"delete","file"}, "удалить":{"delete","file"},
     "терминал":{"shell","command","terminal"}, "команда":{"shell","command","terminal"}, "выполни":{"shell","execute","command"}, "экран":{"observe","screen","vision"}, "посмотри":{"observe","screen","vision"}, "посмотреть":{"observe","screen","vision"}, "скрин":{"observe","screen","vision"},
     "кликни":{"click","select","gui"}, "клик":{"click","select","gui"}, "нажми":{"click","key","gui"}, "нажать":{"click","key","gui"}, "напиши":{"type","text","gui"}, "введи":{"type","text","gui"}, "ввести":{"type","text","gui"}, "напечатай":{"type","text","gui"}, "перетащи":{"drag","gui"}, "перетащить":{"drag","gui"}, "прокрути":{"scroll","gui"}, "прокрутить":{"scroll","gui"}, "подожди":{"wait"}, "подождать":{"wait"},
-    "ютуб":{"youtube","video","browser","open"}, "youtube":{"youtube","video","browser","open"}, "спотифай":{"spotify","music","browser","open"}, "spotify":{"spotify","music","browser","open"}, "музыка":{"spotify","music","audio"}, "музыку":{"spotify","music","audio"},
+    # Media/app colloquialisms commonly produced by Russian speech input.
+    "ютуб":{"youtube","video","browser","open"}, "ютюб":{"youtube","video","browser","open"}, "youtube":{"youtube","video","browser","open"},
+    "спотифай":{"spotify","music","browser","open"}, "споти":{"spotify","music","browser","open"}, "спотик":{"spotify","music","browser","open"}, "спотифайка":{"spotify","music","browser","open"}, "spotify":{"spotify","music","browser","open"},
+    "телеграм":{"telegram","app","close","open"}, "телеграмм":{"telegram","app","close","open"}, "тг":{"telegram","app","close","open"}, "тгшка":{"telegram","app","close","open"}, "телега":{"telegram","app","close","open"},
+    "музыка":{"spotify","music","audio"}, "музыку":{"spotify","music","audio"}, "песня":{"spotify","music","audio"}, "песню":{"spotify","music","audio"}, "трек":{"spotify","music","audio"}, "альбом":{"spotify","music","audio"},
+    "включи":{"spotify","music","play","audio"}, "включить":{"spotify","music","play","audio"}, "проиграй":{"spotify","music","play","audio"}, "проиграть":{"spotify","music","play","audio"},
+    "исполнитель":{"spotify","music","artist","play"}, "исполнителя":{"spotify","music","artist","play"}, "артист":{"spotify","music","artist","play"}, "артиста":{"spotify","music","artist","play"},
+    # Volume requests must keep both read and write volume tools available so
+    # the model can inspect the current level before changing it.
+    "громкость":{"volume","audio","get_volume","set_volume"}, "громко":{"volume","audio","set_volume"}, "громче":{"volume","audio","set_volume","get_volume"}, "тише":{"volume","audio","set_volume","get_volume"}, "тихо":{"volume","audio","set_volume","get_volume"}, "звук":{"volume","audio","mute_volume","get_volume"}, "беззвучный":{"volume","audio","mute_volume"}, "мут":{"volume","audio","mute_volume"},
     "память":{"memory","remember"}, "запомни":{"memory","remember"}, "вспомни":{"memory","recall"}, "задача":{"task","plan"}, "задачу":{"task","plan"}, "план":{"plan","task"}, "спланируй":{"plan","task"}, "сделай":{"task","plan","execute"},
 }
 
