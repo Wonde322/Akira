@@ -1,4 +1,4 @@
-from capabilities.apps import _name
+from computer_state import Application, ApplicationResolver
 from capabilities.tool_router import _tokens, select_tool_schemas
 from spotify_control import _clean_query
 
@@ -7,18 +7,24 @@ def _schema(name, description):
     return {"type": "function", "function": {"name": name, "description": description}}
 
 
-def test_russian_app_aliases_are_normalized():
-    assert _name("тг") == "Telegram"
-    assert _name("телега") == "Telegram"
-    assert _name("спотик") == "Spotify"
-    assert _name("спотифай") == "Spotify"
+def test_russian_colloquialisms_resolve_against_real_app_names():
+    resolver = ApplicationResolver()
+    resolver._cache = [
+        Application("Telegram", "/Applications/Telegram.app", "org.telegram.desktop"),
+        Application("Spotify", "/Applications/Spotify.app", "com.spotify.client"),
+        Application("Google Chrome", "/Applications/Google Chrome.app", "com.google.Chrome"),
+    ]
+    assert resolver.resolve("тг").name == "Telegram"
+    assert resolver.resolve("телега").name == "Telegram"
+    assert resolver.resolve("спотик").name == "Spotify"
+    assert resolver.resolve("спотифай").name == "Spotify"
 
 
-def test_russian_media_aliases_expand_to_spotify_terms():
+def test_tokenization_is_generic_not_application_alias_driven():
     tokens = _tokens("включи исполнителя спотик")
-    assert "spotify" in tokens
-    assert "music" in tokens
-    assert "play" in tokens
+    assert "vklyuchi" in tokens
+    assert "ispolnitelya" in tokens
+    assert "spotik" in tokens
 
 
 def test_spotify_query_strips_intent_prefix():
