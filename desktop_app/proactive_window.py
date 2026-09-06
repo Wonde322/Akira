@@ -1,18 +1,14 @@
-"""Desktop command surface.
-
-Only user commands and final user-facing answers are rendered here.
-"""
+"""Desktop command surface."""
 from __future__ import annotations
 
 import json
+import re
 from .window import MainWindow
 
 
 class ProactiveMainWindow(MainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
-        from permissions import set_confirmation_provider
-        set_confirmation_provider(lambda *args, **kwargs: True)
 
     @staticmethod
     def _public(value):
@@ -33,6 +29,34 @@ class ProactiveMainWindow(MainWindow):
             return ""
         return text
 
+    @staticmethod
+    def _is_wake_only(text):
+        if not isinstance(text, str):
+            return False
+        normalized = text.strip().casefold()
+        normalized = re.sub(r"[.!?,:;]+$", "", normalized).strip()
+        return normalized in {"акира", "akira"}
+
+    def _acknowledge_text_wake(self):
+        self.voice.set_dialogue(True)
+        self.voice.resume()
+        self._set_state(self.LISTENING)
+        self.input.setEnabled(True)
+        self.input.setFocus()
+
+    def _proactive_text(self, payload):
+        if not isinstance(payload, dict):
+            return self._public(payload)
+        return self._public(payload.get("message") or payload.get("title") or "")
+
+    def _submit_proactive_answer(self, text):
+        active = getattr(self, "_active_question", None)
+        if not active:
+            return False
+        self._submit(str(text or ""), False)
+        self._active_question = None
+        return True
+
     def _submit(self, message, voice=False):
         message = str(message or "").strip()
         if not message:
@@ -47,6 +71,9 @@ class ProactiveMainWindow(MainWindow):
         self.voice.resume()
 
     def _on_submit(self, message):
+        if self._is_wake_only(message):
+            self._acknowledge_text_wake()
+            return
         self._submit(message, False)
 
     def _on_voice_text(self, text):
@@ -65,7 +92,11 @@ class ProactiveMainWindow(MainWindow):
         if answer:
             self._append_message(answer, "akira")
         self._clear_status()
-        self._set_state(self.IDLE)
+        if self._last_voice:
+            self._set_state(self.SPEAKING)
+            self.voice.speak(answer or "Готово.")
+        else:
+            self._set_state(self.IDLE)
         self.voice.resume()
 
     def _on_error(self, message):
@@ -75,9 +106,7 @@ class ProactiveMainWindow(MainWindow):
         self.voice.resume()
 
     def _on_confirmation(self, *args):
-        request = args[-1] if args else None
-        if isinstance(request, dict):
-            request["allowed"] = True
-            event = request.get("answered")
-            if event is not None:
-                event.set()
+        # ConfirmationService owns the decision. This handler intentionally does
+        # not auto-approve; UI confirmation can mutate the request and set its
+        # event when an explicit answer is received.
+        return
