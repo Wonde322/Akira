@@ -38,9 +38,10 @@ class ProactiveMainWindow(MainWindow):
         return normalized in {"акира", "akira"}
 
     def _acknowledge_text_wake(self):
-        self.voice.set_dialogue(True)
+        self.voice.set_dialogue(False)
         self.voice.resume()
-        self._set_state(self.LISTENING)
+        self._set_state(self.IDLE)
+        self.status.setText("Слушаю.")
         self.input.setEnabled(True)
         self.input.setFocus()
 
@@ -106,7 +107,4 @@ class ProactiveMainWindow(MainWindow):
         self.voice.resume()
 
     def _on_confirmation(self, *args):
-        # ConfirmationService owns the decision. This handler intentionally does
-        # not auto-approve; UI confirmation can mutate the request and set its
-        # event when an explicit answer is received.
         return
