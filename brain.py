@@ -6,9 +6,14 @@ from config import COMPUTER_USE_MAX_STEPS, MAX_TOOL_ITERATIONS, MAX_ACTIONS_WITH
 from permissions import get_permission, request_confirmation
 from tool_registry import get_tool_implementation, get_tool_schemas
 from capabilities.protocol import result_to_text, is_structured
-from agent_loop import SYSTEM_PROMPT
+from agent_loop import SYSTEM_PROMPT, get_session as _canonical_get_session
 
-SYSTEM=SYSTEM_PROMPT; TOOLS=get_tool_schemas(); client=None; conversation=[]
+SYSTEM=SYSTEM_PROMPT; TOOLS=get_tool_schemas(); client=None
+# Legacy Brain exposes the canonical default history by identity. Clear only on
+# module initialization so reloaded compatibility consumers start clean while
+# normal repeated calls retain conversation state.
+conversation=_canonical_get_session(None).history
+conversation.clear()
 
 def _ensure_client():
     import config
@@ -18,7 +23,7 @@ def _ensure_client():
     return config._client
 
 def _tool_result_text(result): return result_to_text(result)
-def _invalid_arguments_result(function_name,error): return {"success":False,"error":"error","output":"Невалидный JSON аргументов для "+function_name+": "+str(error)}
+def _invalid_arguments_result(function_name,error): return {"success":False,"error":"invalid_arguments","output":"Невалидный JSON аргументов для "+function_name+": "+str(error)}
 
 def execute_tool_result(function_name,arguments,source=None):
     arguments=dict(arguments or {}); permission=get_permission(function_name)
@@ -44,8 +49,7 @@ def _sync_compat_audit(agent_loop):
         if destination.exists(): return
         old_globals=getattr(agent_loop.record_tool_execution,"__globals__",{})
         source=Path(old_globals.get("AUDIT_FILE", ""))
-        if source.exists() and source.resolve()!=destination.resolve():
-            destination.parent.mkdir(parents=True,exist_ok=True); shutil.copyfile(source,destination)
+        if source.exists() and source.resolve()!=destination.resolve(): destination.parent.mkdir(parents=True,exist_ok=True); shutil.copyfile(source,destination)
     except (OSError,TypeError,ValueError): pass
 
 class Brain:
@@ -57,16 +61,12 @@ class Brain:
 
 def ask(message,session_id=None):
     import agent_loop
-    global conversation
-    if client is not None: agent_loop.client=client
+    injected_client=client
+    if injected_client is not None: agent_loop.client=injected_client
     agent_loop.get_permission=get_permission; agent_loop.get_tool_implementation=get_tool_implementation; agent_loop.request_confirmation=request_confirmation; agent_loop._invalid_arguments_result=_invalid_arguments_result
-    session=agent_loop.get_session(session_id); before=len(session.history)
-    try:
-        result=agent_loop.ask(message,session_id=session_id)
-        conversation=list(session.history[before:])
-        return result
-    finally: _sync_compat_audit(agent_loop)
+    try: return agent_loop.ask(message,session_id=session_id)
+    finally:
+        _sync_compat_audit(agent_loop)
+        if injected_client is not None: agent_loop.client=None
 
-def get_session(session_id=None):
-    from agent_loop import get_session as agent_get_session
-    return agent_get_session(session_id)
+def get_session(session_id=None): return _canonical_get_session(session_id)
