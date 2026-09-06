@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -14,6 +15,10 @@ def _name(value):
     value = str(value or "").strip()
     if value.endswith(".app"):
         value = os.path.basename(value)[:-4]
+    # Exact Latin app names are already understood by Launch Services. Only run
+    # discovery when the user supplied a non-Latin/abbreviated reference.
+    if not re.search(r"[а-яёА-ЯЁ]", value) and len(value) > 4:
+        return value
     resolved = _resolver.resolve(value)
     return resolved.name if resolved else value
 
