@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
-import app_control
 import computer_state
 import fast_commands
 
@@ -21,7 +18,7 @@ def test_application_resolver_understands_russian_colloquialisms_without_alias_t
 
 
 def test_fast_open_does_not_enter_llm(monkeypatch):
-    monkeypatch.setattr(app_control, "open_target", lambda target: {
+    monkeypatch.setattr(fast_commands, "open_target", lambda target: {
         "success": True,
         "data": {"application": "Spotify"},
     })
@@ -32,7 +29,7 @@ def test_fast_open_does_not_enter_llm(monkeypatch):
 
 
 def test_fast_close_does_not_use_shell(monkeypatch):
-    monkeypatch.setattr(app_control, "close_target", lambda target: {
+    monkeypatch.setattr(fast_commands, "close_target", lambda target: {
         "success": True,
         "data": {"application": "Spotify", "closed": True},
     })
