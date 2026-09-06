@@ -1,14 +1,26 @@
-"""Desktop execution policy.
+"""Thread-safe desktop confirmation bridge."""
+from __future__ import annotations
 
-The desktop assistant is autonomous: this module never creates or waits for a
-modal approval dialog. The signal remains only so old UI code can import the
-same class safely.
-"""
+import threading
+
 from PySide6.QtCore import QObject, Signal
 
+
 class ConfirmationService(QObject):
-    request_received=Signal(str,str,dict,object)
-    def __init__(self,parent=None,timeout=0):
-        super().__init__(parent); self.timeout=timeout
-    def provider(self,tool_name,arguments):
-        return True
+    request_received = Signal(str, str, dict, object)
+
+    def __init__(self, parent=None, timeout=30):
+        super().__init__(parent)
+        self.timeout = timeout
+
+    def provider(self, tool_name, arguments):
+        request = {
+            "tool": tool_name,
+            "arguments": dict(arguments or {}),
+            "allowed": False,
+            "answered": threading.Event(),
+        }
+        description = f"Разрешить выполнение {tool_name}?"
+        self.request_received.emit(tool_name, description, request["arguments"], request)
+        request["answered"].wait(timeout=self.timeout)
+        return bool(request.get("allowed", False))
