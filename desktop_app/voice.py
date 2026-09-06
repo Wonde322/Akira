@@ -38,6 +38,7 @@ class VoiceEngine(QObject):
         if self._thread and self._thread.is_alive():
             return
         self._stop = False
+        self._listening = True
         self._stop_event.clear()
         self._interrupt.clear()
         self._cancel_event.clear()
@@ -65,36 +66,16 @@ class VoiceEngine(QObject):
         self._interrupt.set()
         self._commands.put((kind, payload))
 
-    def capture_once(self):
-        self._put("capture")
-
-    def cancel_capture(self):
-        self._cancel_event.set()
-        self._put("cancel")
-
-    def set_dialogue(self, enabled):
-        self._put("dialogue", bool(enabled))
-
-    def set_wake_enabled(self, enabled):
-        self._put("wake", bool(enabled))
-
-    def speak(self, text):
-        self._put("speak", str(text))
-
-    def stop_speaking(self):
-        dlg.stop_speaking()
-
-    def pause(self):
-        self._interrupt.set()
-
-    def resume(self):
-        self._interrupt.set()
-
-    def is_dialogue(self):
-        return self._dialogue
-
-    def end_turn(self):
-        self._put("end_turn")
+    def capture_once(self): self._put("capture")
+    def cancel_capture(self): self._cancel_event.set(); self._put("cancel")
+    def set_dialogue(self, enabled): self._put("dialogue", bool(enabled))
+    def set_wake_enabled(self, enabled): self._put("wake", bool(enabled))
+    def speak(self, text): self._put("speak", str(text))
+    def stop_speaking(self): dlg.stop_speaking()
+    def pause(self): self._interrupt.set()
+    def resume(self): self._interrupt.set()
+    def is_dialogue(self): return self._dialogue
+    def end_turn(self): self._put("end_turn")
 
     def _set_dialogue(self, value):
         value = bool(value)
@@ -116,26 +97,24 @@ class VoiceEngine(QObject):
         return str(text).strip()
 
     def _speak(self, dialogue, text):
+        self._listening = False
         self._emit_state(self.SPEAKING)
         try:
             dialogue.speak(text)
         finally:
+            self._listening = True
             self._emit_state(self.IDLE)
 
     def _capture(self, dialogue=None):
         dialogue = dialogue or dlg
         self._cancel_event.clear()
-        try:
-            dialogue.clear_audio_queue()
-        except AttributeError:
-            pass
+        try: dialogue.clear_audio_queue()
+        except AttributeError: pass
+        self._listening = False
         self.mic_capture.emit(True)
         self._emit_state(self.LISTENING)
         try:
-            audio = dialogue.record_utterance(
-                timeout=dialogue.DIALOGUE_TIMEOUT,
-                cancel_event=self._cancel_event,
-            )
+            audio = dialogue.record_utterance(timeout=dialogue.DIALOGUE_TIMEOUT, cancel_event=self._cancel_event)
         except Exception as exc:
             self.error.emit(str(exc) or "Не удалось записать речь.")
             audio = None
@@ -143,39 +122,32 @@ class VoiceEngine(QObject):
             self.mic_capture.emit(False)
         if audio is None:
             self._emit_state(self.IDLE)
+            self._listening = True
             return
         text = self._safe_transcribe(dialogue, audio)
         if text:
             self._emit_state(self.THINKING)
             self.text_ready.emit(text)
+            return
+        self._listening = True
         self._emit_state(self.IDLE)
 
     def _wake_listen(self, dialogue=None):
         dialogue = dialogue or dlg
-        if not self._audio_ok:
-            return
+        if not self._audio_ok: return
+        self._listening = True
         self._emit_state(self.LISTENING)
         try:
-            audio = dialogue.record_utterance(
-                timeout=getattr(dialogue, "WAKE_TIMEOUT", None),
-                end_silence_ms=getattr(dialogue, "WAKE_END_SILENCE_MS", None),
-                cancel_event=self._interrupt,
-            )
+            audio = dialogue.record_utterance(timeout=getattr(dialogue, "WAKE_TIMEOUT", None), end_silence_ms=getattr(dialogue, "WAKE_END_SILENCE_MS", None), cancel_event=self._interrupt)
         except TypeError:
-            try:
-                audio = dialogue.record_utterance(cancel_event=self._interrupt)
-            except Exception:
-                return
-        except Exception:
-            return
-        if not audio:
-            return
+            try: audio = dialogue.record_utterance(cancel_event=self._interrupt)
+            except Exception: return
+        except Exception: return
+        if not audio: return
         text = self._safe_transcribe(dialogue, audio)
-        if not text:
-            return
+        if not text: return
         detected = dialogue.find_wake_word(text)
-        if detected is None:
-            return
+        if detected is None: return
         self._set_dialogue(True)
         command = dialogue.remove_wake_word(text, detected)
         if not command:
@@ -186,30 +158,20 @@ class VoiceEngine(QObject):
 
     def _dialogue_listen(self, dialogue=None):
         dialogue = dialogue or dlg
-        if not self._audio_ok:
-            return
+        if not self._audio_ok: return
+        self._listening = True
         self._emit_state(self.LISTENING)
         try:
-            audio = dialogue.record_utterance(
-                timeout=dialogue.DIALOGUE_TIMEOUT,
-                cancel_event=self._interrupt,
-            )
+            audio = dialogue.record_utterance(timeout=dialogue.DIALOGUE_TIMEOUT, cancel_event=self._interrupt)
         except TypeError:
-            try:
-                audio = dialogue.record_utterance(cancel_event=self._interrupt)
-            except Exception:
-                audio = None
-        except Exception:
-            audio = None
+            try: audio = dialogue.record_utterance(cancel_event=self._interrupt)
+            except Exception: audio = None
+        except Exception: audio = None
         if not audio:
-            self._set_dialogue(False)
-            self._emit_state(self.IDLE)
-            return
+            self._set_dialogue(False); self._emit_state(self.IDLE); return
         text = self._safe_transcribe(dialogue, audio)
         if not text:
-            self._set_dialogue(False)
-            self._emit_state(self.IDLE)
-            return
+            self._set_dialogue(False); self._emit_state(self.IDLE); return
         self._emit_state(self.THINKING)
         self.text_ready.emit(text)
 
@@ -217,60 +179,32 @@ class VoiceEngine(QObject):
         import sounddevice as sd
         stream = None
         try:
-            stream = sd.InputStream(
-                samplerate=dlg.SAMPLE_RATE,
-                channels=1,
-                dtype="float32",
-                blocksize=dlg.FRAME_SAMPLES,
-                callback=dlg.audio_callback,
-            )
-            stream.__enter__()
-            self._audio_ok = True
+            stream = sd.InputStream(samplerate=dlg.SAMPLE_RATE, channels=1, dtype="float32", blocksize=dlg.FRAME_SAMPLES, callback=dlg.audio_callback)
+            stream.__enter__(); self._audio_ok = True
         except Exception:
             self.error.emit("Не удалось открыть микрофон. Проверь разрешение macOS для приложения Akira.")
         try:
             while not self._stop_event.is_set():
-                try:
-                    kind, payload = self._commands.get_nowait()
-                except queue.Empty:
-                    kind = payload = None
+                try: kind, payload = self._commands.get_nowait()
+                except queue.Empty: kind = payload = None
                 if kind:
                     self._interrupt.clear()
-                    if kind == "stop":
-                        break
-                    if kind == "wake":
-                        self._wake_enabled = bool(payload)
-                        continue
-                    if kind == "dialogue":
-                        self._set_dialogue(payload)
-                        continue
-                    if kind == "end_turn":
-                        self._set_dialogue(False)
-                        continue
-                    if kind == "cancel":
-                        self.mic_capture.emit(False)
-                        continue
-                    if kind == "capture":
-                        self._capture()
-                        continue
-                    if kind == "speak":
-                        self._speak(dlg, payload)
-                        continue
+                    if kind == "stop": break
+                    if kind == "wake": self._wake_enabled = bool(payload); continue
+                    if kind == "dialogue": self._set_dialogue(payload); continue
+                    if kind == "end_turn": self._set_dialogue(False); continue
+                    if kind == "cancel": self.mic_capture.emit(False); continue
+                    if kind == "capture": self._capture(); continue
+                    if kind == "speak": self._speak(dlg, payload); continue
                 if not self._audio_ok:
-                    time.sleep(0.05)
-                    continue
-                if self._dialogue:
-                    self._dialogue_listen()
-                elif self._wake_enabled:
-                    self._wake_listen()
-                else:
-                    time.sleep(0.02)
+                    time.sleep(0.05); continue
+                if self._dialogue: self._dialogue_listen()
+                elif self._wake_enabled: self._wake_listen()
+                else: time.sleep(0.02)
         finally:
             self._audio_ok = False
             self._listening = False
             if stream:
-                try:
-                    stream.__exit__(None, None, None)
-                except Exception:
-                    pass
+                try: stream.__exit__(None, None, None)
+                except Exception: pass
             self._thread = None
