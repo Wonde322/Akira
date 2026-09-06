@@ -79,9 +79,9 @@ class VoiceEngine(QObject):
             try: audio=dialogue.record_utterance(cancel_event=self._interrupt)
             except Exception: audio=None
         except Exception: audio=None
-        if not audio: self._set_dialogue(False); self._listening=True; self._emit_state(self.IDLE); return
+        if not audio: self._emit_state(self.IDLE); return
         text=self._safe_transcribe(dialogue,audio)
-        if not text: self._set_dialogue(False); self._listening=True; self._emit_state(self.IDLE); return
+        if not text: self._emit_state(self.IDLE); return
         self._listening=False; self._emit_state(self.THINKING); self.text_ready.emit(text)
     def _run(self):
         import sounddevice as sd
