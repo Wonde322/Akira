@@ -98,8 +98,11 @@ class VoiceEngine(QObject):
                     self._interrupt.clear()
                     if kind=="stop": break
                     if kind=="wake": self._wake_enabled=bool(payload); self._listening=True; continue
-                    if kind=="dialogue": self._set_dialogue(payload); self._listening=bool(payload); continue
-                    if kind=="end_turn": self._set_dialogue(False); self._listening=True; continue
+                    if kind=="dialogue":
+                        self._set_dialogue(payload); self._listening=bool(payload)
+                        if not payload: self._emit_state(self.IDLE)
+                        continue
+                    if kind=="end_turn": self._set_dialogue(False); self._listening=True; self._emit_state(self.IDLE); continue
                     if kind=="cancel": self.mic_capture.emit(False); self._listening=True; continue
                     if kind=="capture": self._capture(); continue
                     if kind=="speak": self._speak(dlg,payload); continue
