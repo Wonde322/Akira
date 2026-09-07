@@ -6,13 +6,33 @@ import pytest
 
 
 PROJECT_MODULES = {
-    "activity_stats", "analysis", "audit", "brain", "capabilities.apps",
-    "capabilities.backend", "capabilities.filesystem", "capabilities.gui",
-    "capabilities.key", "capabilities.observe", "capabilities.observation",
-    "capabilities.protocol", "capabilities.shell", "capabilities.task",
-    "capabilities.vision", "capabilities.wait", "config", "format", "memory",
-    "permissions", "session", "spotify_control", "tool_registry", "tools", "youtube",
+    "activity_stats", "agent_execution", "agent_loop", "analysis", "audit", "brain",
+    "capabilities.apps", "capabilities.backend", "capabilities.filesystem", "capabilities.gui",
+    "capabilities.key", "capabilities.observe", "capabilities.observation", "capabilities.protocol",
+    "capabilities.shell", "capabilities.task", "capabilities.vision", "capabilities.wait", "config",
+    "format", "memory", "permissions", "session", "spotify_control", "tool_registry", "tools", "youtube",
 }
+
+
+class _CanonicalModuleProxy:
+    """Test-only compatibility view: reads and writes target agent_loop directly."""
+
+    def __init__(self, module):
+        object.__setattr__(self, "_module", module)
+
+    def __getattr__(self, name):
+        if name == "_ensure_client":
+            return self._module._ensure_client
+        if name == "execute_tool_result":
+            return lambda function_name, arguments: self._module._execute(function_name, dict(arguments or {}))[0]
+        if name == "execute_tool":
+            return lambda function_name, arguments: self._module._tool_result_text(
+                self._module._execute(function_name, dict(arguments or {}))[0]
+            )
+        return getattr(self._module, name)
+
+    def __setattr__(self, name, value):
+        setattr(self._module, name, value)
 
 
 @pytest.fixture(scope="session")
@@ -73,6 +93,8 @@ def isolated_project(monkeypatch, tmp_path):
         audit_module = sys.modules.get("audit")
         if audit_module is not None:
             audit_module.AUDIT_FILE = str(tmp_path / "tool_audit.jsonl")
+        if module_name == "brain":
+            return _CanonicalModuleProxy(importlib.import_module("agent_loop"))
         return module
 
     yield load
