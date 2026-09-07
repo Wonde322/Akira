@@ -11,8 +11,8 @@ def test_worker_normal_submissions_keep_fifo_generation():
     first = worker._queue.get_nowait()
     second = worker._queue.get_nowait()
 
-    assert first == ("первый", second[1])
-    assert second == ("второй", first[1])
+    assert [first, second] == ["первый", "второй"]
+    assert list(worker._generations) == [0, 0]
 
 
 def test_worker_cancellation_invalidates_existing_generation_only():
@@ -20,15 +20,15 @@ def test_worker_cancellation_invalidates_existing_generation_only():
 
     worker = BrainWorker()
     worker.submit("первый")
-    before = worker._queue.get_nowait()
+    before = worker._generations.popleft()
     worker.cancel_current()
     worker.submit("второй")
-    after = worker._queue.get_nowait()
+    after = worker._generations.popleft()
 
-    assert before[1] != after[1]
+    assert before != after
 
 
-def test_text_window_does_not_import_voice_runtime(monkeypatch):
+def test_text_window_does_not_import_voice_runtime():
     import sys
 
     sys.modules.pop("desktop_app.text_window", None)
