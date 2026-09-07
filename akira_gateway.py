@@ -1,21 +1,20 @@
-"""Unified entry gateway for Akira.
+"""Single input boundary for Akira.
 
-Text, voice and UI all enter through submit(). Deterministic desktop actions
-are resolved before the reasoning model; everything else reaches the canonical
-runtime through the same boundary.
+All user-facing entry points normalize into RequestContext, take the
+low-latency deterministic path when applicable, and otherwise execute through
+AgentRuntime. The gateway does not own a second reasoning loop.
 """
+from __future__ import annotations
 
+from agent_runtime import AgentRuntime, get_agent_runtime
 from request_context import create_request_context
 
 
 class AkiraGateway:
+    """Normalize requests and dispatch them to the canonical runtime."""
 
-    def __init__(self, runtime=None):
-        if runtime is None:
-            from akira_runtime import AkiraRuntime
-            from brain_adapter import BrainAdapter
-            runtime = AkiraRuntime(components={"brain": BrainAdapter()})
-        self.runtime = runtime
+    def __init__(self, runtime: AgentRuntime | None = None):
+        self.runtime = runtime or get_agent_runtime()
 
     def submit(
         self,
@@ -38,19 +37,14 @@ class AkiraGateway:
         primary_text = request.primary_text()
         if primary_text:
             from fast_commands import handle as handle_fast_command
+
             fast_result = handle_fast_command(primary_text)
             if fast_result is not None:
                 return fast_result
 
-        router = getattr(self.runtime, "route_request", None)
-        if callable(router):
-            return router(request)
-
-        return self.runtime.handle(
-            text=primary_text,
-            voice_text=request.voice_text,
-            observation=request.observation,
-            metadata=request.metadata,
+        return self.runtime.run(
+            primary_text,
+            session_id=(request.metadata or {}).get("session_id"),
         )
 
     def submit_text(self, text, metadata=None):
