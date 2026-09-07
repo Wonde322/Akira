@@ -1,4 +1,9 @@
-"""Canonical execution boundary and lifecycle control for Akira."""
+"""Canonical execution boundary for Akira.
+
+Every input channel becomes a RequestContext at the gateway and enters this
+runtime. The runtime owns lifecycle and cancellation; agent_loop owns reasoning
+and tool execution.
+"""
 from __future__ import annotations
 
 from threading import Event, RLock
@@ -14,14 +19,13 @@ from execution_policy import choose_execution_policy
 
 
 def _run_agent_turn(goal, session_id=None):
-    """Run one foreground turn through the canonical agent loop."""
+    """Run one turn through the single canonical reasoning loop."""
     import agent_loop
-
     return agent_loop.ask(goal, session_id=session_id)
 
 
 class AgentRuntime:
-    """Own active execution contexts and cooperative cancellation."""
+    """Own execution lifecycle and delegate reasoning to one canonical loop."""
 
     def __init__(self, executor: Optional[Callable[..., str]] = None):
         self._executor = executor or _run_agent_turn
@@ -29,14 +33,26 @@ class AgentRuntime:
         self._active: dict[str, Event] = {}
         self._pending_cancel: set[str] = set()
 
+    @staticmethod
+    def _normalize_request(request, session_id=None):
+        if hasattr(request, "primary_text"):
+            text = request.primary_text()
+            metadata = getattr(request, "metadata", {}) or {}
+            session_id = metadata.get("session_id") or session_id
+            source = getattr(request, "source", "text")
+        else:
+            text = request
+            source = "text"
+        return str(text or "").strip(), session_id, source
+
     def set_executor(self, executor: Callable[..., str]):
         if not callable(executor):
             raise TypeError("executor must be callable")
         with self._lock:
             self._executor = executor
 
-    def run(self, goal, session_id=None, *, mode="auto", task_id=None):
-        goal = str(goal or "").strip()
+    def run(self, request, session_id=None, *, mode="auto", task_id=None):
+        goal, session_id, source = self._normalize_request(request, session_id)
         if not goal:
             raise ValueError("AgentRuntime requires a non-empty goal")
 
@@ -51,9 +67,7 @@ class AgentRuntime:
         if task_key:
             with self._lock:
                 if task_key in self._active:
-                    raise RuntimeError(
-                        "An execution with this task_id is already active"
-                    )
+                    raise RuntimeError("An execution with this task_id is already active")
                 if task_key in self._pending_cancel:
                     self._pending_cancel.discard(task_key)
                     cancel_event.set()
