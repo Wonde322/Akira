@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import queue
 import threading
+from collections import deque
 
 from PySide6.QtCore import QThread, Signal
 
@@ -11,7 +12,6 @@ _GREETING_WORDS = {"привет", "приветик", "здарова", "здо
 
 
 def _simple_greeting(message):
-    """Backward-compatible helper; the live worker now routes through Gateway."""
     normalized = str(message or "").strip().casefold().strip(" .,!?:;—-")
     if normalized in _GREETING_WORDS:
         return "Привет."
@@ -32,18 +32,22 @@ def _friendly_error(error):
 
 def _response_text(result):
     if isinstance(result, dict):
-        if result.get("response"):
-            return str(result["response"])
-        if result.get("output"):
-            return str(result["output"])
-        if result.get("answer"):
-            return str(result["answer"])
+        for key in ("response", "output", "answer"):
+            if result.get(key):
+                return str(result[key])
         if result.get("error"):
             return _friendly_error(result["error"])
     return str(result or "Не получил ответ.")
 
 
 class BrainWorker(QThread):
+    """FIFO request owner with explicit cancellation generations.
+
+    The public queue remains a queue of plain messages for compatibility. A
+    parallel generation deque tracks cancellation without changing the queue's
+    public contract.
+    """
+
     answer_ready = Signal(str)
     error = Signal(str)
     activity = Signal(str)
@@ -54,30 +58,40 @@ class BrainWorker(QThread):
         super().__init__(parent)
         self.session_id = session_id
         self._queue = queue.Queue()
+        self._generations = deque()
         self._lock = threading.Lock()
         self._stop = False
         self._stop_event = threading.Event()
         self._generation = 0
-
-    @staticmethod
-    def _stop_word(message):
-        return str(message or "").strip().casefold().strip(" .,!?:;") in _STOP_WORDS
 
     def _prepare_start(self):
         with self._lock:
             pending = []
             while True:
                 try:
-                    item = self._queue.get_nowait()
+                    message = self._queue.get_nowait()
                 except queue.Empty:
                     break
-                if item is not None:
-                    pending.append(item)
+                if message is not None:
+                    pending.append(message)
+
+            pending_generations = list(self._generations)
+            self._generations.clear()
             self._stop = False
             self._stop_event.clear()
-            self._generation += 1
-            for item in pending:
-                self._queue.put(item)
+
+            for index, message in enumerate(pending):
+                generation = (
+                    pending_generations[index]
+                    if index < len(pending_generations)
+                    else self._generation
+                )
+                self._queue.put(message)
+                self._generations.append(generation)
+
+    @staticmethod
+    def _stop_word(message):
+        return str(message or "").strip().casefold().strip(" .,!?:;") in _STOP_WORDS
 
     def submit(self, message):
         if message is None:
@@ -85,16 +99,13 @@ class BrainWorker(QThread):
         message = str(message).strip()
         if not message:
             return
+        if self._stop_word(message):
+            self.cancel_current()
+            self.answer_ready.emit("Остановил.")
+            return
         with self._lock:
-            self._generation += 1
-            if self._stop_word(message):
-                self._stop = True
-                self._stop_event.set()
-                self._queue.put(None)
-                self.busy.emit(False)
-                self.answer_ready.emit("Остановил.")
-                return
             self._queue.put(message)
+            self._generations.append(self._generation)
 
     def cancel_current(self):
         with self._lock:
@@ -104,7 +115,6 @@ class BrainWorker(QThread):
 
     def request_stop(self):
         with self._lock:
-            self._generation += 1
             self._stop = True
             self._stop_event.set()
             self._queue.put(None)
@@ -121,8 +131,9 @@ class BrainWorker(QThread):
                 continue
             if message is None:
                 return
+
             with self._lock:
-                generation = self._generation
+                generation = self._generations.popleft() if self._generations else self._generation
             self.busy.emit(True)
             try:
                 from akira_gateway import create_gateway
@@ -130,10 +141,15 @@ class BrainWorker(QThread):
                 result = gateway.submit_text(message, metadata={"session_id": self.session_id})
                 answer = _response_text(result)
             except Exception as exc:
-                if generation == self._generation:
+                with self._lock:
+                    current_generation = self._generation
+                if generation == current_generation and not self._stop_event.is_set():
                     self.error.emit(_friendly_error(exc))
-                    self.busy.emit(False)
-                continue
-            if generation == self._generation:
-                self.answer_ready.emit(answer)
                 self.busy.emit(False)
+                continue
+
+            with self._lock:
+                current_generation = self._generation
+            if generation == current_generation and not self._stop_event.is_set():
+                self.answer_ready.emit(answer)
+            self.busy.emit(False)
