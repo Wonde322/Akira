@@ -1,4 +1,4 @@
-"""Single execution boundary and lifecycle control for Akira agent runs."""
+"""Canonical execution boundary and lifecycle control for Akira."""
 from __future__ import annotations
 
 from threading import Event, RLock
@@ -8,73 +8,31 @@ from execution_context import (
     ExecutionContext,
     activate_execution,
     deactivate_execution,
-    raise_if_execution_cancelled,
 )
 from execution_policy import choose_execution_policy
 
-_guard_lock = RLock()
-
-
-def _install_cancellation_guards(agent_loop):
-    """Compatibility bridge until cancellation checks live directly in agent_loop."""
-    with _guard_lock:
-        if getattr(agent_loop, "_akira_cancellation_guards", False):
-            return
-        original_tools_for_reasoning = agent_loop._tools_for_reasoning
-        original_execute_and_audit = agent_loop._execute_and_audit
-
-        def guarded_tools_for_reasoning(*args, **kwargs):
-            raise_if_execution_cancelled()
-            return original_tools_for_reasoning(*args, **kwargs)
-
-        def guarded_execute_and_audit(*args, **kwargs):
-            raise_if_execution_cancelled()
-            return original_execute_and_audit(*args, **kwargs)
-
-        agent_loop._tools_for_reasoning = guarded_tools_for_reasoning
-        agent_loop._execute_and_audit = guarded_execute_and_audit
-        agent_loop._akira_cancellation_guards = True
-
 
 def _run_agent_turn(goal, session_id=None):
-    """Execute a turn through the public Gateway -> Runtime -> Brain path."""
-    raise_if_execution_cancelled()
-
+    """Run one foreground turn through the canonical agent loop."""
     import agent_loop
-    _install_cancellation_guards(agent_loop)
 
-    from akira_gateway import create_gateway
-
-    gateway = create_gateway()
-    result = gateway.submit_text(
-        goal,
-        metadata={"session_id": session_id} if session_id else None,
-    )
-
-    raise_if_execution_cancelled()
-    return result
+    return agent_loop.ask(goal, session_id=session_id)
 
 
 class AgentRuntime:
-    """Owns active execution contexts and cooperative cancellation signals."""
+    """Own active execution contexts and cooperative cancellation."""
 
     def __init__(self, executor: Optional[Callable[..., str]] = None):
-        self._executor = executor
+        self._executor = executor or _run_agent_turn
         self._lock = RLock()
-        self._active = {}
-        self._pending_cancel = set()
+        self._active: dict[str, Event] = {}
+        self._pending_cancel: set[str] = set()
 
     def set_executor(self, executor: Callable[..., str]):
         if not callable(executor):
             raise TypeError("executor must be callable")
         with self._lock:
             self._executor = executor
-
-    def _resolve_executor(self):
-        with self._lock:
-            if self._executor is None:
-                self._executor = _run_agent_turn
-            return self._executor
 
     def run(self, goal, session_id=None, *, mode="auto", task_id=None):
         goal = str(goal or "").strip()
@@ -88,10 +46,13 @@ class AgentRuntime:
             background=bool(task_key and str(mode or "").lower() == "background"),
         )
         cancel_event = Event()
+
         if task_key:
             with self._lock:
                 if task_key in self._active:
-                    raise RuntimeError("An execution with this task_id is already active")
+                    raise RuntimeError(
+                        "An execution with this task_id is already active"
+                    )
                 if task_key in self._pending_cancel:
                     self._pending_cancel.discard(task_key)
                     cancel_event.set()
@@ -107,7 +68,7 @@ class AgentRuntime:
         token = activate_execution(context)
         try:
             context.raise_if_cancelled()
-            result = self._resolve_executor()(goal, session_id=session_id)
+            result = self._executor(goal, session_id=session_id)
             context.raise_if_cancelled()
             return result
         finally:
