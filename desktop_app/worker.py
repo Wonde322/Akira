@@ -11,7 +11,6 @@ _GREETING_WORDS = {"привет", "приветик", "здарова", "здо
 
 
 def _simple_greeting(message):
-    """Backward-compatible helper; the live worker now routes through Gateway."""
     normalized = str(message or "").strip().casefold().strip(" .,!?:;—-")
     if normalized in _GREETING_WORDS:
         return "Привет."
@@ -32,18 +31,21 @@ def _friendly_error(error):
 
 def _response_text(result):
     if isinstance(result, dict):
-        if result.get("response"):
-            return str(result["response"])
-        if result.get("output"):
-            return str(result["output"])
-        if result.get("answer"):
-            return str(result["answer"])
+        for key in ("response", "output", "answer"):
+            if result.get(key):
+                return str(result[key])
         if result.get("error"):
             return _friendly_error(result["error"])
     return str(result or "Не получил ответ.")
 
 
 class BrainWorker(QThread):
+    """FIFO request owner.
+
+    Normal submissions never invalidate earlier requests. Only explicit
+    cancellation/stop advances the cancellation generation.
+    """
+
     answer_ready = Signal(str)
     error = Signal(str)
     activity = Signal(str)
@@ -55,29 +57,15 @@ class BrainWorker(QThread):
         self.session_id = session_id
         self._queue = queue.Queue()
         self._lock = threading.Lock()
-        self._stop = False
         self._stop_event = threading.Event()
-        self._generation = 0
+        self._cancel_generation = 0
+
+    def _prepare_start(self):
+        self._stop_event.clear()
 
     @staticmethod
     def _stop_word(message):
         return str(message or "").strip().casefold().strip(" .,!?:;") in _STOP_WORDS
-
-    def _prepare_start(self):
-        with self._lock:
-            pending = []
-            while True:
-                try:
-                    item = self._queue.get_nowait()
-                except queue.Empty:
-                    break
-                if item is not None:
-                    pending.append(item)
-            self._stop = False
-            self._stop_event.clear()
-            self._generation += 1
-            for item in pending:
-                self._queue.put(item)
 
     def submit(self, message):
         if message is None:
@@ -85,44 +73,35 @@ class BrainWorker(QThread):
         message = str(message).strip()
         if not message:
             return
+        if self._stop_word(message):
+            self.cancel_current()
+            self.answer_ready.emit("Остановил.")
+            return
         with self._lock:
-            self._generation += 1
-            if self._stop_word(message):
-                self._stop = True
-                self._stop_event.set()
-                self._queue.put(None)
-                self.busy.emit(False)
-                self.answer_ready.emit("Остановил.")
-                return
-            self._queue.put(message)
+            generation = self._cancel_generation
+            self._queue.put((message, generation))
 
     def cancel_current(self):
         with self._lock:
-            self._generation += 1
+            self._cancel_generation += 1
         self.busy.emit(False)
         return True
 
     def request_stop(self):
-        with self._lock:
-            self._generation += 1
-            self._stop = True
-            self._stop_event.set()
-            self._queue.put(None)
+        self._stop_event.set()
+        self._queue.put(None)
         self.busy.emit(False)
 
     def run(self):
         self._prepare_start()
-        while True:
+        while not self._stop_event.is_set():
             try:
-                message = self._queue.get(timeout=0.1)
+                item = self._queue.get(timeout=0.1)
             except queue.Empty:
-                if self._stop_event.is_set():
-                    return
                 continue
-            if message is None:
+            if item is None:
                 return
-            with self._lock:
-                generation = self._generation
+            message, generation = item
             self.busy.emit(True)
             try:
                 from akira_gateway import create_gateway
@@ -130,10 +109,14 @@ class BrainWorker(QThread):
                 result = gateway.submit_text(message, metadata={"session_id": self.session_id})
                 answer = _response_text(result)
             except Exception as exc:
-                if generation == self._generation:
+                with self._lock:
+                    current_generation = self._cancel_generation
+                if generation == current_generation and not self._stop_event.is_set():
                     self.error.emit(_friendly_error(exc))
-                    self.busy.emit(False)
                 continue
-            if generation == self._generation:
+
+            with self._lock:
+                current_generation = self._cancel_generation
+            if generation == current_generation and not self._stop_event.is_set():
                 self.answer_ready.emit(answer)
-                self.busy.emit(False)
+            self.busy.emit(False)
