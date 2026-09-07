@@ -8,6 +8,7 @@ from execution_context import (
     ExecutionContext,
     activate_execution,
     deactivate_execution,
+    raise_if_execution_cancelled,
 )
 from execution_policy import choose_execution_policy
 
@@ -67,9 +68,9 @@ class AgentRuntime:
         )
         token = activate_execution(context)
         try:
-            context.raise_if_cancelled()
+            raise_if_execution_cancelled()
             result = self._executor(goal, session_id=session_id)
-            context.raise_if_cancelled()
+            raise_if_execution_cancelled()
             return result
         finally:
             deactivate_execution(token)
