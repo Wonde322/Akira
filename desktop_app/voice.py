@@ -68,10 +68,7 @@ class VoiceEngine(QObject):
         self._set_dialogue(True); command=dialogue.remove_wake_word(text,detected)
         self._listening=False
         if callable(emit): emit(self.THINKING)
-        # Route wake-only through the same request boundary as every other
-        # voice utterance so the assistant answers "Да?" through the normal
-        # response/TTS path instead of bypassing the desktop worker.
-        self.text_ready.emit(command or detected)
+        self.text_ready.emit(command or "акира")
     def _dialogue_listen(self,dialogue=None):
         dialogue=dialogue or dlg
         if not self._audio_ok: return
