@@ -6,7 +6,6 @@ import ``AkiraRuntime``; it contains no alternate execution implementation.
 from __future__ import annotations
 
 from agent_runtime import AgentRuntime
-from akira_gateway import AkiraGateway
 
 
 class AkiraRuntime(AgentRuntime):
@@ -19,18 +18,9 @@ class AkiraRuntime(AgentRuntime):
             "gateway": True,
         }
 
-    def handle(
-        self,
-        text=None,
-        voice_text=None,
-        observation=None,
-        metadata=None,
-    ):
+    def handle(self, text=None, voice_text=None, observation=None, metadata=None):
         request = voice_text if voice_text is not None else text
-        return self.run(
-            request,
-            session_id=(metadata or {}).get("session_id"),
-        )
+        return self.run(request, session_id=(metadata or {}).get("session_id"))
 
     def route_request(self, request):
         if hasattr(request, "primary_text"):
@@ -112,11 +102,7 @@ class AkiraRuntime(AgentRuntime):
 
 
 def create_runtime(components=None):
-    if components:
-        return AkiraRuntime(
-            executor=components.get("executor")
-        )
-    return AkiraRuntime()
+    return AkiraRuntime(executor=(components or {}).get("executor"))
 
 
 Runtime = AkiraRuntime
