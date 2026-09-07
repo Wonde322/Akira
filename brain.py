@@ -1,27 +1,34 @@
-"""Legacy import surface for the canonical Akira loop.
-
-Brain is no longer an execution layer. All reasoning and tool execution live in
-agent_loop; this module only preserves old imports during the transition.
-"""
+"""Legacy import surface for the canonical Akira loop."""
 from __future__ import annotations
 
-from agent_loop import SYSTEM_PROMPT, TOOLS, ask, get_session
+import agent_loop as _agent_loop
+
+SYSTEM_PROMPT = _agent_loop.SYSTEM_PROMPT
+SYSTEM = SYSTEM_PROMPT
+TOOLS = _agent_loop.TOOLS
+conversation = _agent_loop.conversation
+client = None
+
+
+def _ensure_client():
+    return _agent_loop._ensure_client()
+
+
+def ask(message, session_id=None):
+    return _agent_loop.ask(message, session_id=session_id)
+
+
+def get_session(session_id=None):
+    return _agent_loop.get_session(session_id)
 
 
 class Brain:
-    """Compatibility name that delegates directly to agent_loop."""
+    """Compatibility name for the canonical loop."""
 
-    def ask(self, message, session_id=None):
-        return ask(message, session_id=session_id)
-
-    run = ask
-    handle = ask
-    process = ask
+    ask = staticmethod(ask)
+    run = staticmethod(ask)
+    handle = staticmethod(ask)
+    process = staticmethod(ask)
 
     def decide(self, goal, context=None):
         raise RuntimeError("Structured decisions are owned by agent_loop.ask")
-
-
-SYSTEM = SYSTEM_PROMPT
-client = None
-conversation = get_session(None).history
