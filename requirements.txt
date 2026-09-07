@@ -1,0 +1,8 @@
+# Runtime and test dependencies used by the project and CI.
+groq
+numpy
+PySide6
+sounddevice
+soundfile
+webrtcvad
+pytest
