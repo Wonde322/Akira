@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import queue
 import threading
+from collections import deque
 
 from PySide6.QtCore import QThread, Signal
 
@@ -40,10 +41,11 @@ def _response_text(result):
 
 
 class BrainWorker(QThread):
-    """FIFO request owner.
+    """FIFO request owner with explicit cancellation generations.
 
-    Normal submissions never invalidate earlier requests. Only explicit
-    cancellation/stop advances the cancellation generation.
+    The public queue remains a queue of plain messages for compatibility. A
+    parallel generation deque tracks cancellation without changing the queue's
+    public contract.
     """
 
     answer_ready = Signal(str)
@@ -56,12 +58,36 @@ class BrainWorker(QThread):
         super().__init__(parent)
         self.session_id = session_id
         self._queue = queue.Queue()
+        self._generations = deque()
         self._lock = threading.Lock()
+        self._stop = False
         self._stop_event = threading.Event()
-        self._cancel_generation = 0
+        self._generation = 0
 
     def _prepare_start(self):
-        self._stop_event.clear()
+        with self._lock:
+            pending = []
+            while True:
+                try:
+                    message = self._queue.get_nowait()
+                except queue.Empty:
+                    break
+                if message is not None:
+                    pending.append(message)
+
+            pending_generations = list(self._generations)
+            self._generations.clear()
+            self._stop = False
+            self._stop_event.clear()
+
+            for index, message in enumerate(pending):
+                generation = (
+                    pending_generations[index]
+                    if index < len(pending_generations)
+                    else self._generation
+                )
+                self._queue.put(message)
+                self._generations.append(generation)
 
     @staticmethod
     def _stop_word(message):
@@ -78,30 +104,36 @@ class BrainWorker(QThread):
             self.answer_ready.emit("Остановил.")
             return
         with self._lock:
-            generation = self._cancel_generation
-            self._queue.put((message, generation))
+            self._queue.put(message)
+            self._generations.append(self._generation)
 
     def cancel_current(self):
         with self._lock:
-            self._cancel_generation += 1
+            self._generation += 1
         self.busy.emit(False)
         return True
 
     def request_stop(self):
-        self._stop_event.set()
-        self._queue.put(None)
+        with self._lock:
+            self._stop = True
+            self._stop_event.set()
+            self._queue.put(None)
         self.busy.emit(False)
 
     def run(self):
         self._prepare_start()
-        while not self._stop_event.is_set():
+        while True:
             try:
-                item = self._queue.get(timeout=0.1)
+                message = self._queue.get(timeout=0.1)
             except queue.Empty:
+                if self._stop_event.is_set():
+                    return
                 continue
-            if item is None:
+            if message is None:
                 return
-            message, generation = item
+
+            with self._lock:
+                generation = self._generations.popleft() if self._generations else self._generation
             self.busy.emit(True)
             try:
                 from akira_gateway import create_gateway
@@ -110,13 +142,14 @@ class BrainWorker(QThread):
                 answer = _response_text(result)
             except Exception as exc:
                 with self._lock:
-                    current_generation = self._cancel_generation
+                    current_generation = self._generation
                 if generation == current_generation and not self._stop_event.is_set():
                     self.error.emit(_friendly_error(exc))
+                self.busy.emit(False)
                 continue
 
             with self._lock:
-                current_generation = self._cancel_generation
+                current_generation = self._generation
             if generation == current_generation and not self._stop_event.is_set():
                 self.answer_ready.emit(answer)
             self.busy.emit(False)
