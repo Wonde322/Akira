@@ -1,8 +1,8 @@
 """Single input boundary for Akira.
 
-All user-facing entry points normalize into RequestContext, take the
-low-latency deterministic path when applicable, and otherwise execute through
-AgentRuntime. The gateway does not own a second reasoning loop.
+Text and future voice input share exactly the same execution path:
+RequestContext -> AgentRuntime -> agent_loop.
+The gateway normalizes input and owns no reasoning or action executor.
 """
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from request_context import create_request_context
 
 
 class AkiraGateway:
-    """Normalize requests and dispatch them to the canonical runtime."""
+    """Normalize user input and hand it to the canonical runtime."""
 
     def __init__(self, runtime: AgentRuntime | None = None):
         self.runtime = runtime or get_agent_runtime()
@@ -33,19 +33,9 @@ class AkiraGateway:
             metadata=metadata,
             request_id=request_id,
         )
-
-        primary_text = request.primary_text()
-        if primary_text:
-            from fast_commands import handle as handle_fast_command
-
-            fast_result = handle_fast_command(primary_text)
-            if fast_result is not None:
-                return fast_result
-
-        return self.runtime.run(
-            primary_text,
-            session_id=(request.metadata or {}).get("session_id"),
-        )
+        if not request.primary_text():
+            return {"success": False, "error": "empty_request", "output": "Пустой запрос."}
+        return self.runtime.run(request)
 
     def submit_text(self, text, metadata=None):
         return self.submit(text=text, source="text", metadata=metadata)
@@ -57,5 +47,5 @@ class AkiraGateway:
         return self.submit(text=text, observation=observation, source="ui", metadata=metadata)
 
 
-def create_gateway(runtime=None):
+def create_gateway(runtime: AgentRuntime | None = None):
     return AkiraGateway(runtime=runtime)
