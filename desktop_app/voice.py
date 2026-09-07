@@ -66,10 +66,9 @@ class VoiceEngine(QObject):
         detected=dialogue.find_wake_word(text)
         if detected is None: return
         self._set_dialogue(True); command=dialogue.remove_wake_word(text,detected)
-        if not command: self._speak(dialogue,"Да?"); return
         self._listening=False
         if callable(emit): emit(self.THINKING)
-        self.text_ready.emit(command)
+        self.text_ready.emit(command or "акира")
     def _dialogue_listen(self,dialogue=None):
         dialogue=dialogue or dlg
         if not self._audio_ok: return
