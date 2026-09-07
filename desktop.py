@@ -31,7 +31,7 @@ def _redirect_paths():
 
 
 def _silence_stdout():
-    """Windowed .app может не иметь консоли; `say`/print не должны падать."""
+    """Windowed .app может не иметь консоли."""
     if sys.stdout is None:
         sys.stdout = open(os.devnull, "w")
     if sys.stderr is None:
@@ -43,16 +43,14 @@ def main():
     _redirect_paths()
 
     from PySide6.QtWidgets import QApplication
+    from desktop_app.text_window import TextMainWindow
 
     app = QApplication(sys.argv)
     app.setApplicationName("Akira")
     app.setApplicationDisplayName("Akira")
 
-    from desktop_app.proactive_window import ProactiveMainWindow
-
-    window = ProactiveMainWindow()
+    window = TextMainWindow()
     window.show()
-
     return app.exec()
 
 
