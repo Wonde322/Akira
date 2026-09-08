@@ -1,21 +1,19 @@
-"""Unified entry gateway for Akira.
+"""Single input boundary for Akira.
 
-Text, voice and UI all enter through submit(). Deterministic desktop actions
-are resolved before the reasoning model; everything else reaches the canonical
-runtime through the same boundary.
+Every channel is normalized once here and enters AgentRuntime with its stable
+request identity. The gateway owns no reasoning or action execution.
 """
+from __future__ import annotations
 
+from agent_runtime import AgentRuntime, get_agent_runtime
 from request_context import create_request_context
 
 
 class AkiraGateway:
+    """Normalize input and hand it to the canonical runtime."""
 
-    def __init__(self, runtime=None):
-        if runtime is None:
-            from akira_runtime import AkiraRuntime
-            from brain_adapter import BrainAdapter
-            runtime = AkiraRuntime(components={"brain": BrainAdapter()})
-        self.runtime = runtime
+    def __init__(self, runtime: AgentRuntime | None = None):
+        self.runtime = runtime or get_agent_runtime()
 
     def submit(
         self,
@@ -34,34 +32,42 @@ class AkiraGateway:
             metadata=metadata,
             request_id=request_id,
         )
+        if not request.primary_text():
+            return {
+                "success": False,
+                "error": "empty_request",
+                "output": "Пустой запрос.",
+            }
+        return self.runtime.run(request, task_id=request.request_id)
 
-        primary_text = request.primary_text()
-        if primary_text:
-            from fast_commands import handle as handle_fast_command
-            fast_result = handle_fast_command(primary_text)
-            if fast_result is not None:
-                return fast_result
+    def cancel(self, request_id):
+        return self.runtime.cancel(request_id)
 
-        router = getattr(self.runtime, "route_request", None)
-        if callable(router):
-            return router(request)
-
-        return self.runtime.handle(
-            text=primary_text,
-            voice_text=request.voice_text,
-            observation=request.observation,
-            metadata=request.metadata,
+    def submit_text(self, text, metadata=None, request_id=None):
+        return self.submit(
+            text=text,
+            source="text",
+            metadata=metadata,
+            request_id=request_id,
         )
 
-    def submit_text(self, text, metadata=None):
-        return self.submit(text=text, source="text", metadata=metadata)
+    def submit_voice(self, transcript, metadata=None, request_id=None):
+        return self.submit(
+            voice_text=transcript,
+            source="voice",
+            metadata=metadata,
+            request_id=request_id,
+        )
 
-    def submit_voice(self, transcript, metadata=None):
-        return self.submit(voice_text=transcript, source="voice", metadata=metadata)
+    def submit_ui(self, text=None, observation=None, metadata=None, request_id=None):
+        return self.submit(
+            text=text,
+            observation=observation,
+            source="ui",
+            metadata=metadata,
+            request_id=request_id,
+        )
 
-    def submit_ui(self, text=None, observation=None, metadata=None):
-        return self.submit(text=text, observation=observation, source="ui", metadata=metadata)
 
-
-def create_gateway(runtime=None):
+def create_gateway(runtime: AgentRuntime | None = None):
     return AkiraGateway(runtime=runtime)

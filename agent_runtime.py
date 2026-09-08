@@ -1,10 +1,16 @@
-"""Single execution boundary and lifecycle control for Akira agent runs."""
+"""Canonical execution boundary for Akira.
+
+Every input channel becomes a RequestContext at the gateway and enters this
+runtime. The runtime owns lifecycle and cancellation; agent_loop owns reasoning
+and tool execution.
+"""
 from __future__ import annotations
 
 from threading import Event, RLock
 from typing import Callable, Optional
 
 from execution_context import (
+    ExecutionCancelled,
     ExecutionContext,
     activate_execution,
     deactivate_execution,
@@ -12,57 +18,33 @@ from execution_context import (
 )
 from execution_policy import choose_execution_policy
 
-_guard_lock = RLock()
-
-
-def _install_cancellation_guards(agent_loop):
-    """Compatibility bridge until cancellation checks live directly in agent_loop."""
-    with _guard_lock:
-        if getattr(agent_loop, "_akira_cancellation_guards", False):
-            return
-        original_tools_for_reasoning = agent_loop._tools_for_reasoning
-        original_execute_and_audit = agent_loop._execute_and_audit
-
-        def guarded_tools_for_reasoning(*args, **kwargs):
-            raise_if_execution_cancelled()
-            return original_tools_for_reasoning(*args, **kwargs)
-
-        def guarded_execute_and_audit(*args, **kwargs):
-            raise_if_execution_cancelled()
-            return original_execute_and_audit(*args, **kwargs)
-
-        agent_loop._tools_for_reasoning = guarded_tools_for_reasoning
-        agent_loop._execute_and_audit = guarded_execute_and_audit
-        agent_loop._akira_cancellation_guards = True
-
 
 def _run_agent_turn(goal, session_id=None):
-    """Execute a turn through the public Gateway -> Runtime -> Brain path."""
-    raise_if_execution_cancelled()
-
+    """Run one turn through the single canonical reasoning loop."""
     import agent_loop
-    _install_cancellation_guards(agent_loop)
-
-    from akira_gateway import create_gateway
-
-    gateway = create_gateway()
-    result = gateway.submit_text(
-        goal,
-        metadata={"session_id": session_id} if session_id else None,
-    )
-
-    raise_if_execution_cancelled()
-    return result
+    return agent_loop.ask(goal, session_id=session_id)
 
 
 class AgentRuntime:
-    """Owns active execution contexts and cooperative cancellation signals."""
+    """Own execution lifecycle and delegate reasoning to one canonical loop."""
 
     def __init__(self, executor: Optional[Callable[..., str]] = None):
-        self._executor = executor
+        self._executor = executor or _run_agent_turn
         self._lock = RLock()
-        self._active = {}
-        self._pending_cancel = set()
+        self._active: dict[str, Event] = {}
+        self._pending_cancel: set[str] = set()
+
+    @staticmethod
+    def _normalize_request(request, session_id=None):
+        if hasattr(request, "primary_text"):
+            text = request.primary_text()
+            metadata = getattr(request, "metadata", {}) or {}
+            session_id = metadata.get("session_id") or session_id
+            source = getattr(request, "source", "text")
+        else:
+            text = request
+            source = "text"
+        return str(text or "").strip(), session_id, source
 
     def set_executor(self, executor: Callable[..., str]):
         if not callable(executor):
@@ -70,14 +52,8 @@ class AgentRuntime:
         with self._lock:
             self._executor = executor
 
-    def _resolve_executor(self):
-        with self._lock:
-            if self._executor is None:
-                self._executor = _run_agent_turn
-            return self._executor
-
-    def run(self, goal, session_id=None, *, mode="auto", task_id=None):
-        goal = str(goal or "").strip()
+    def run(self, request, session_id=None, *, mode="auto", task_id=None):
+        goal, session_id, source = self._normalize_request(request, session_id)
         if not goal:
             raise ValueError("AgentRuntime requires a non-empty goal")
 
@@ -88,6 +64,7 @@ class AgentRuntime:
             background=bool(task_key and str(mode or "").lower() == "background"),
         )
         cancel_event = Event()
+
         if task_key:
             with self._lock:
                 if task_key in self._active:
@@ -106,10 +83,16 @@ class AgentRuntime:
         )
         token = activate_execution(context)
         try:
-            context.raise_if_cancelled()
-            result = self._resolve_executor()(goal, session_id=session_id)
-            context.raise_if_cancelled()
+            raise_if_execution_cancelled()
+            result = self._executor(goal, session_id=session_id)
+            raise_if_execution_cancelled()
             return result
+        except ExecutionCancelled:
+            return {
+                "success": False,
+                "error": "cancelled",
+                "output": "Выполнение отменено.",
+            }
         finally:
             deactivate_execution(token)
             if task_key:
