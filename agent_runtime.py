@@ -10,6 +10,7 @@ from threading import Event, RLock
 from typing import Callable, Optional
 
 from execution_context import (
+    ExecutionCancelled,
     ExecutionContext,
     activate_execution,
     deactivate_execution,
@@ -86,6 +87,12 @@ class AgentRuntime:
             result = self._executor(goal, session_id=session_id)
             raise_if_execution_cancelled()
             return result
+        except ExecutionCancelled:
+            return {
+                "success": False,
+                "error": "cancelled",
+                "output": "Выполнение отменено.",
+            }
         finally:
             deactivate_execution(token)
             if task_key:
