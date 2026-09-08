@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import queue
 import threading
-from collections import deque
+import uuid
 
 from PySide6.QtCore import QThread, Signal
 
@@ -35,18 +35,15 @@ def _response_text(result):
         for key in ("response", "output", "answer"):
             if result.get(key):
                 return str(result[key])
+        if result.get("error") == "cancelled":
+            return ""
         if result.get("error"):
             return _friendly_error(result["error"])
     return str(result or "Не получил ответ.")
 
 
 class BrainWorker(QThread):
-    """FIFO request owner with explicit cancellation generations.
-
-    The public queue remains a queue of plain messages for compatibility. A
-    parallel generation deque tracks cancellation without changing the queue's
-    public contract.
-    """
+    """Own the desktop FIFO and cancel the active runtime request cooperatively."""
 
     answer_ready = Signal(str)
     error = Signal(str)
@@ -58,40 +55,20 @@ class BrainWorker(QThread):
         super().__init__(parent)
         self.session_id = session_id
         self._queue = queue.Queue()
-        self._generations = deque()
-        self._lock = threading.Lock()
-        self._stop = False
+        self._lock = threading.RLock()
         self._stop_event = threading.Event()
-        self._generation = 0
-
-    def _prepare_start(self):
-        with self._lock:
-            pending = []
-            while True:
-                try:
-                    message = self._queue.get_nowait()
-                except queue.Empty:
-                    break
-                if message is not None:
-                    pending.append(message)
-
-            pending_generations = list(self._generations)
-            self._generations.clear()
-            self._stop = False
-            self._stop_event.clear()
-
-            for index, message in enumerate(pending):
-                generation = (
-                    pending_generations[index]
-                    if index < len(pending_generations)
-                    else self._generation
-                )
-                self._queue.put(message)
-                self._generations.append(generation)
+        self._active_request_id = None
+        self._gateway = None
 
     @staticmethod
     def _stop_word(message):
         return str(message or "").strip().casefold().strip(" .,!?:;") in _STOP_WORDS
+
+    def _gateway_instance(self):
+        if self._gateway is None:
+            from akira_gateway import create_gateway
+            self._gateway = create_gateway()
+        return self._gateway
 
     def submit(self, message):
         if message is None:
@@ -104,52 +81,70 @@ class BrainWorker(QThread):
             self.answer_ready.emit("Остановил.")
             return
         with self._lock:
-            self._queue.put(message)
-            self._generations.append(self._generation)
+            if self._stop_event.is_set():
+                return
+            self._queue.put((message, str(uuid.uuid4())))
 
     def cancel_current(self):
         with self._lock:
-            self._generation += 1
-        self.busy.emit(False)
-        return True
+            request_id = self._active_request_id
+        if not request_id:
+            return False
+        return bool(self._gateway_instance().cancel(request_id))
 
     def request_stop(self):
         with self._lock:
-            self._stop = True
             self._stop_event.set()
-            self._queue.put(None)
-        self.busy.emit(False)
+            request_id = self._active_request_id
+            while True:
+                try:
+                    self._queue.get_nowait()
+                except queue.Empty:
+                    break
+        if request_id:
+            self._gateway_instance().cancel(request_id)
+        if not self.isRunning():
+            return
+        self._queue.put(None)
 
     def run(self):
-        self._prepare_start()
+        self._stop_event.clear()
         while True:
             try:
-                message = self._queue.get(timeout=0.1)
+                item = self._queue.get(timeout=0.1)
             except queue.Empty:
                 if self._stop_event.is_set():
                     return
                 continue
-            if message is None:
+
+            if item is None:
                 return
 
+            message, request_id = item
             with self._lock:
-                generation = self._generations.popleft() if self._generations else self._generation
+                if self._stop_event.is_set():
+                    continue
+                self._active_request_id = request_id
             self.busy.emit(True)
+
             try:
-                from akira_gateway import create_gateway
-                gateway = create_gateway()
-                result = gateway.submit_text(message, metadata={"session_id": self.session_id})
+                result = self._gateway_instance().submit_text(
+                    message,
+                    metadata={"session_id": self.session_id},
+                    request_id=request_id,
+                )
                 answer = _response_text(result)
+                with self._lock:
+                    cancelled = self._stop_event.is_set() or self._active_request_id != request_id
+                if not cancelled and answer:
+                    self.answer_ready.emit(answer)
             except Exception as exc:
                 with self._lock:
-                    current_generation = self._generation
-                if generation == current_generation and not self._stop_event.is_set():
+                    cancelled = self._stop_event.is_set() or self._active_request_id != request_id
+                if not cancelled:
                     self.error.emit(_friendly_error(exc))
+            finally:
+                with self._lock:
+                    if self._active_request_id == request_id:
+                        self._active_request_id = None
                 self.busy.emit(False)
-                continue
-
-            with self._lock:
-                current_generation = self._generation
-            if generation == current_generation and not self._stop_event.is_set():
-                self.answer_ready.emit(answer)
-            self.busy.emit(False)
