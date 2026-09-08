@@ -9,8 +9,9 @@ PROJECT_MODULES = {
     "activity_stats", "agent_execution", "agent_loop", "analysis", "audit", "brain",
     "capabilities.apps", "capabilities.backend", "capabilities.filesystem", "capabilities.gui",
     "capabilities.key", "capabilities.observe", "capabilities.observation", "capabilities.protocol",
-    "capabilities.shell", "capabilities.task", "capabilities.vision", "capabilities.wait", "config",
-    "format", "memory", "permissions", "session", "spotify_control", "tool_registry", "tools", "youtube",
+    "capabilities.recovery", "capabilities.shell", "capabilities.task", "capabilities.vision",
+    "capabilities.wait", "config", "execution_context", "execution_policy", "format", "memory",
+    "permissions", "request_context", "session", "spotify_control", "tool_registry", "tools", "youtube",
 }
 
 
