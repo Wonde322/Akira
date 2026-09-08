@@ -1,8 +1,7 @@
 """Single input boundary for Akira.
 
-Text and future voice input share exactly the same execution path:
-RequestContext -> AgentRuntime -> agent_loop.
-The gateway normalizes input and owns no reasoning or action executor.
+Every channel is normalized once here and enters AgentRuntime with its stable
+request identity. The gateway owns no reasoning or action execution.
 """
 from __future__ import annotations
 
@@ -11,7 +10,7 @@ from request_context import create_request_context
 
 
 class AkiraGateway:
-    """Normalize user input and hand it to the canonical runtime."""
+    """Normalize input and hand it to the canonical runtime."""
 
     def __init__(self, runtime: AgentRuntime | None = None):
         self.runtime = runtime or get_agent_runtime()
@@ -34,17 +33,40 @@ class AkiraGateway:
             request_id=request_id,
         )
         if not request.primary_text():
-            return {"success": False, "error": "empty_request", "output": "Пустой запрос."}
-        return self.runtime.run(request)
+            return {
+                "success": False,
+                "error": "empty_request",
+                "output": "Пустой запрос.",
+            }
+        return self.runtime.run(request, task_id=request.request_id)
 
-    def submit_text(self, text, metadata=None):
-        return self.submit(text=text, source="text", metadata=metadata)
+    def cancel(self, request_id):
+        return self.runtime.cancel(request_id)
 
-    def submit_voice(self, transcript, metadata=None):
-        return self.submit(voice_text=transcript, source="voice", metadata=metadata)
+    def submit_text(self, text, metadata=None, request_id=None):
+        return self.submit(
+            text=text,
+            source="text",
+            metadata=metadata,
+            request_id=request_id,
+        )
 
-    def submit_ui(self, text=None, observation=None, metadata=None):
-        return self.submit(text=text, observation=observation, source="ui", metadata=metadata)
+    def submit_voice(self, transcript, metadata=None, request_id=None):
+        return self.submit(
+            voice_text=transcript,
+            source="voice",
+            metadata=metadata,
+            request_id=request_id,
+        )
+
+    def submit_ui(self, text=None, observation=None, metadata=None, request_id=None):
+        return self.submit(
+            text=text,
+            observation=observation,
+            source="ui",
+            metadata=metadata,
+            request_id=request_id,
+        )
 
 
 def create_gateway(runtime: AgentRuntime | None = None):
