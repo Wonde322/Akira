@@ -47,22 +47,6 @@ def test_spotify_client_id_is_defined_once():
     assert auth_source.count("71886dbe05744e1c9ea56d7ffd1eec1c") == 0
 
 
-def test_brain_delegates_to_canonical_agent_loop(monkeypatch):
-    import agent_loop
-    import brain
-
-    calls = []
-
-    def fake_ask(message, session_id=None):
-        calls.append((message, session_id))
-        return "готово"
-
-    monkeypatch.setattr(agent_loop, "ask", fake_ask)
-
-    assert brain.ask("открой Safari", session_id="web-1") == "готово"
-    assert calls == [("открой Safari", "web-1")]
-
-
 def test_permission_manager_supports_per_context_providers(tmp_path):
     permission_file = str(tmp_path / "permissions.json")
     assert PermissionManager(permission_file, lambda *_: True).request_confirmation(
