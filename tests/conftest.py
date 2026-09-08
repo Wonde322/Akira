@@ -63,7 +63,12 @@ def isolated_project(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "groq", fake_groq)
 
     def load(module_name):
-        module = importlib.import_module(module_name)
+        if module_name == "brain":
+            module = importlib.import_module("agent_loop")
+            sys.modules["brain"] = module
+        else:
+            module = importlib.import_module(module_name)
+
         permissions_module = sys.modules.get("permissions")
         if permissions_module is not None:
             permissions_module.PERMISSIONS_FILE = str(tmp_path / "permissions.json")
