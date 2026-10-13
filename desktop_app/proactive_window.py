@@ -62,7 +62,9 @@ class ProactiveMainWindow(MainWindow):
         if not message: return
         if self._state == self.SPEAKING: self.voice.stop_speaking()
         self._append_message(message, "user"); self._last_voice = bool(voice)
-        self.input.setEnabled(True); self.worker.submit(message); self._set_state(self.THINKING); self.voice.resume()
+        self.input.setEnabled(True); self.worker.submit(message); self._set_state(self.THINKING)
+        if not voice:
+            self.voice.resume()
 
     def _on_submit(self, message):
         if self._is_wake_only(message): self._acknowledge_text_wake(); return
