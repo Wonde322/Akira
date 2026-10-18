@@ -1,8 +1,8 @@
 """Single execution boundary and lifecycle control for Akira agent runs.
 
 UI, voice, foreground tasks and background tasks enter the agent through this
-module. The reasoning implementation is still adapted from ``brain`` for now,
-but task ownership, execution identity and cooperative cancellation live here.
+module. Task ownership, execution identity and cooperative cancellation live
+here; the reasoning-loop entry point is provided by ``agent_loop``.
 """
 from __future__ import annotations
 
@@ -41,9 +41,9 @@ _current_execution: ContextVar[Optional[ExecutionContext]] = ContextVar(
 class AgentRuntime:
     """Owns one agent execution and its cooperative lifecycle controls.
 
-    Callers depend on this runtime contract rather than importing ``brain.ask``.
-    Active task ids are tracked here, making cancellation an execution concern
-    instead of a ThreadPool concern.
+    Callers depend on this runtime contract rather than importing conversation
+    or reasoning modules directly. Active task ids are tracked here, making
+    cancellation an execution concern instead of a ThreadPool concern.
     """
 
     def __init__(self, executor: Optional[Callable[..., str]] = None):
@@ -56,10 +56,8 @@ class AgentRuntime:
 
     def _resolve_executor(self):
         if self._executor is None:
-            # Compatibility adapter while the existing loop is migrated out of
-            # brain.py. No caller outside this runtime imports brain directly.
-            from brain import ask
-            self._executor = ask
+            from agent_loop import run_agent_turn
+            self._executor = run_agent_turn
         return self._executor
 
     def run(self, goal, session_id=None, *, mode="foreground", task_id=None):
