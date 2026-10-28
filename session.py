@@ -16,6 +16,7 @@ class Session:
         self.max_history = max_history
         self.history = []
         self.task = None
+        self.discovered_tools = []
 
     def add(self, message):
         self.history.append(message)

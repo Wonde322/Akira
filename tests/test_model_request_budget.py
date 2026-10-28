@@ -72,11 +72,11 @@ def test_throttling_waits_once_using_provider_time(monkeypatch):
             raise ProviderError(429, 'Please try again in 1.1475s.')
         return 'ok'
     assert model_requests.create_completion(client(create), all_tools=[], tools=[]) == 'ok'
-    assert waits == [pytest.approx(1.2475)]
+    assert waits == [pytest.approx(1.3975)]
     assert len(calls) == 2
 
 
-def test_throttling_is_bounded_to_one_retry(monkeypatch):
+def test_throttling_is_bounded_to_three_retries(monkeypatch):
     calls = []
     monkeypatch.setattr(model_requests, '_wait', lambda _: None)
     def create(**kwargs):
@@ -84,7 +84,7 @@ def test_throttling_is_bounded_to_one_retry(monkeypatch):
         raise ProviderError(429, 'Please try again in 1s.')
     with pytest.raises(ProviderError):
         model_requests.create_completion(client(create), all_tools=[], tools=[])
-    assert len(calls) == 2
+    assert len(calls) == 4
 
 
 def test_rate_wait_is_cancellable():

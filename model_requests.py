@@ -6,11 +6,12 @@ advertised once and the model is asked to generate a new, validated response.
 from __future__ import annotations
 
 import json
+import math
 import re
 import time
 from threading import RLock
 
-from execution_context import raise_if_execution_cancelled
+from execution_context import raise_if_execution_cancelled, report_execution_status
 
 _REQUEST_LOCK = RLock()
 
@@ -32,10 +33,16 @@ def retry_seconds(error):
 
 def _wait(seconds):
     deadline = time.monotonic() + seconds
+    reported = None
     while time.monotonic() < deadline:
         raise_if_execution_cancelled()
+        remaining = max(1, math.ceil(deadline - time.monotonic()))
+        if reported != remaining:
+            report_execution_status(f"Лимит модели: жду {remaining} с")
+            reported = remaining
         time.sleep(min(.05, max(0, deadline - time.monotonic())))
     raise_if_execution_cancelled()
+    report_execution_status("Выполняю запрос…")
 
 
 def _missing_tool(error):
@@ -57,21 +64,29 @@ def _missing_tool(error):
 
 
 def create_completion(client, *, all_tools, **kwargs):
-    repaired = throttled = False
+    repaired = False
+    rate_retries = 0
+    waited = 0.0
+    reported_queue = False
     while not _REQUEST_LOCK.acquire(timeout=.05):
         raise_if_execution_cancelled()
+        if not reported_queue:
+            report_execution_status("Жду очереди модели…")
+            reported_queue = True
     try:
         while True:
             raise_if_execution_cancelled()
+            report_execution_status("Жду ответа модели…")
             try:
                 return client.chat.completions.create(**kwargs)
             except Exception as error:
                 status = getattr(error, 'status_code', None)
-                if status == 429 and not throttled:
+                if status == 429 and rate_retries < 3:
                     delay = retry_seconds(error)
-                    if delay is not None and delay <= 15:
-                        throttled = True
-                        _wait(delay + .1)
+                    if delay is not None and waited + delay + .25 <= 60:
+                        rate_retries += 1
+                        waited += delay + .25
+                        _wait(delay + .25)
                         continue
                 name = _missing_tool(error)
                 tools = kwargs.get('tools', [])

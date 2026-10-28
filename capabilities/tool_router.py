@@ -23,6 +23,12 @@ _CYRILLIC_TO_LATIN = str.maketrans({
     "х":"h","ц":"c","ч":"ch","ш":"sh","щ":"sch","ъ":"","ы":"y","ь":"","э":"e","ю":"yu","я":"ya",
 })
 
+# Universal operation vocabulary, independent of any application names.
+_OPERATION_STEMS = {
+    "otkro": "open", "otkry": "open", "zapus": "open",
+    "zakro": "close", "zakry": "close",
+}
+
 
 def _normalize_word(token: str) -> str:
     value = unicodedata.normalize("NFKD", token).casefold().translate(_CYRILLIC_TO_LATIN)
@@ -48,7 +54,11 @@ def _tokens(text):
             continue
         result.add(raw)
         result.add(normalized)
-        result.add(_stem(normalized))
+        stem = _stem(normalized)
+        result.add(stem)
+        operation = _OPERATION_STEMS.get(stem)
+        if operation:
+            result.add(operation)
     return result
 
 
@@ -90,9 +100,9 @@ def _score(query, schema):
 
 
 def _always_include(task_active):
-    base = {"finish_task", "discover_capability", "verify_goal"}
+    base = {"discover_capability"}
     if task_active:
-        base.update({"observe", "plan_task", "update_task_plan", "complete_plan_step", "fail_plan_step"})
+        base.update({"finish_task", "verify_goal", "observe", "plan_task", "update_task_plan", "complete_plan_step", "fail_plan_step"})
     return base
 
 

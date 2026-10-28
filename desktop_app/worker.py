@@ -80,7 +80,7 @@ class BrainWorker(QThread):
         with self._lock:
             if self._gateway is None:
                 from akira_gateway import create_gateway
-                self._gateway = create_gateway()
+                self._gateway = create_gateway(on_status=self.activity.emit)
             return self._gateway
 
     def _prepare_start(self):

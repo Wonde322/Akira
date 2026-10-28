@@ -9,7 +9,7 @@ from __future__ import annotations
 from contextvars import ContextVar
 from dataclasses import dataclass
 from threading import Event
-from typing import Optional
+from typing import Callable, Optional
 
 
 class ExecutionCancelled(RuntimeError):
@@ -24,6 +24,7 @@ class ExecutionContext:
     task_id: Optional[str] = None
     _cancel_event: Event | None = None
     _desktop_owned: bool = False
+    _on_status: Optional[Callable[[str], None]] = None
 
     @property
     def cancelled(self) -> bool:
@@ -62,3 +63,12 @@ def raise_if_execution_cancelled():
     context = current_execution()
     if context is not None:
         context.raise_if_cancelled()
+
+
+def report_execution_status(message):
+    context = current_execution()
+    if context is not None and context._on_status is not None and not context.cancelled:
+        try:
+            context._on_status(str(message))
+        except Exception:
+            pass

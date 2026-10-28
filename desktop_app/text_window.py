@@ -115,6 +115,9 @@ class TextMainWindow(QMainWindow):
         header.setFont(QFont("SF Pro Display", 16, QFont.Weight.DemiBold))
         header.setStyleSheet("color:#e8e8ee; padding:16px 20px;")
         layout.addWidget(header)
+        self.status = QLabel("Готов")
+        self.status.setStyleSheet("color:#9a9aa4; padding:0 20px 8px;")
+        layout.addWidget(self.status)
 
         self.chat = TextChatView()
         layout.addWidget(self.chat, 1)
@@ -153,6 +156,7 @@ class TextMainWindow(QMainWindow):
         self.worker.answer_ready.connect(self._on_answer)
         self.worker.error.connect(self._on_error)
         self.worker.busy.connect(self._on_busy)
+        self.worker.activity.connect(self.status.setText)
         self.worker.finished.connect(self._on_worker_finished)
         from .services import DesktopServices
         from .proactive_surface import ProactiveDesktopBridge
@@ -182,6 +186,7 @@ class TextMainWindow(QMainWindow):
 
     def _on_busy(self, busy: bool):
         self.stop.setEnabled(busy and not self._closing)
+        self.status.setText("Выполняю запрос…" if busy else "Готов")
 
     def _cancel_current(self):
         request_id = self.worker._active_request_id
