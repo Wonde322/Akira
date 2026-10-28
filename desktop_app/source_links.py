@@ -21,6 +21,23 @@ def extract_sources(text):
     text = re.sub(r'\[([^\]\n]+)\]\((https?://[^\s)]+)\)',
                   lambda m: add(m[2], m[1]) if add_valid(m[2]) else m[0], str(text))
     text = re.sub(r'https?://[^\s<>\]]+', lambda m: add(m[0]) if add_valid(m[0]) else m[0], text)
+    if sources:
+        names = set()
+        for title, url in sources:
+            names.add(title)
+            names.add(urlsplit(url).hostname.removeprefix('www.'))
+        lines = []
+        for line in text.splitlines():
+            match = re.match(r'^\s*(?:[-*]\s*)?(?:источники?|sources?)\s*:\s*(.*)$', line, re.IGNORECASE)
+            if match:
+                remainder = match[1]
+                for name in sorted(names, key=len, reverse=True):
+                    remainder = re.sub(re.escape(name), '', remainder, flags=re.IGNORECASE)
+                remainder = re.sub(r'\b(?:и|and)\b', '', remainder, flags=re.IGNORECASE)
+                if not re.search(r'\w', remainder):
+                    continue
+            lines.append(line)
+        text = '\n'.join(lines)
     return text.strip(), sources
 
 
