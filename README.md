@@ -73,3 +73,19 @@ editing, then interpolated offline. Amplitude banks and neighbouring phases blen
 playback runs 1.5 times faster than the previous 64-phase version;
 this is an amplitude-driven animation, not a frequency-accurate spectrogram.
 The desktop needs no image-processing libraries.
+
+### Restore the pre-redesign desktop
+
+The UI revision is reversible. The remote branch
+`backup/akira-before-design-2026-10-28` preserves the preceding app, including
+the 128-phase core animation. After closing Akira:
+
+```bash
+git fetch origin
+git switch backup/akira-before-design-2026-10-28
+.venv/bin/python desktop.py
+```
+
+Return to the new interface with `git switch fix/akira-runtime-stability`.
+This is a source-code restore point, not a backup of personal chats or memory.
+The redesign does not migrate or modify their storage formats.

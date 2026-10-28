@@ -169,14 +169,25 @@ class TextChatView(QScrollArea):
         self._container = QWidget()
         self._container.setStyleSheet("background:#101013;")
         self._layout = QVBoxLayout(self._container)
-        self._layout.setContentsMargins(20, 20, 20, 12)
-        self._layout.setSpacing(10)
+        self._layout.setContentsMargins(28, 16, 28, 12)
+        self._layout.setSpacing(18)
         self._layout.addStretch(1)
         self.typing = TypingIndicator()
         self._layout.insertWidget(self._layout.count() - 1, self.typing, 0, Qt.AlignmentFlag.AlignLeft)
         self.setWidget(self._container)
         self._follow_bottom = True
         self.verticalScrollBar().rangeChanged.connect(self._range_changed)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._fit_messages()
+
+    def _fit_messages(self):
+        width = max(180, min(680, int(self.viewport().width() * .78)))
+        for label in self._container.findChildren(QLabel):
+            if label.property("messageBubble"):
+                label.setMaximumWidth(width)
+                label.setMinimumWidth(min(width, 520) if len(label.text()) > 100 else 0)
 
     def _range_changed(self, minimum, maximum):
         if self._follow_bottom:
@@ -211,17 +222,18 @@ class TextChatView(QScrollArea):
         label.setWordWrap(True)
         label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
-        label.setMaximumWidth(760)
+        label.setProperty("messageBubble", True)
+        label.setMaximumWidth(680)
         if role == "user":
             label.setStyleSheet(
-                "QLabel { background:#7e1626; color:#fff; border-radius:14px; padding:10px 14px; }"
+                "QLabel { background:#35252d; color:#f1e7e5; border:1px solid #58404a; border-radius:14px; padding:14px 18px; font-size:13px; }"
             )
             row = QHBoxLayout()
             row.addStretch(1)
             row.addWidget(label)
         else:
             label.setStyleSheet(
-                "QLabel { background:#1e1e24; color:#e4e4ec; border:1px solid #303038; border-radius:14px; padding:10px 14px; }"
+                "QLabel { background:#19191e; color:#e4dfdf; border:1px solid #2c2931; border-radius:14px; padding:16px 18px; font-size:13px; }"
             )
             row = QHBoxLayout()
             row.addWidget(label)
@@ -250,6 +262,7 @@ class TextChatView(QScrollArea):
                 links.addWidget(button, index // 3, index % 3, Qt.AlignmentFlag.AlignLeft)
             column.addLayout(links)
         self._layout.insertWidget(self._layout.count() - 2, wrapper)
+        self._fit_messages()
         self.scroll_to_bottom()
 
 
@@ -403,6 +416,8 @@ class TextMainWindow(QMainWindow):
         layout.addWidget(bottom)
 
         self.setCentralWidget(root)
+        from .design import install
+        install(self, root, layout, header_row, bottom, bottom_layout)
         from permissions import set_confirmation_provider
         self.confirmation = ConfirmationService(self)
         self.confirmation.request_received.connect(self._on_confirmation)
@@ -429,6 +444,11 @@ class TextMainWindow(QMainWindow):
         self._render_chat()
         self.worker.start()
         self.input.setFocus()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "sidebar"):
+            self.sidebar.setVisible(self.width() >= 840)
 
     def submit_current(self):
         text = self.input.toPlainText().strip()
@@ -495,6 +515,8 @@ class TextMainWindow(QMainWindow):
             self.chat_selector.addItem(title, chat['id'])
         self.chat_selector.setCurrentIndex(self.chat_selector.findData(self.chat_store.active))
         self.chat_selector.blockSignals(False)
+        from .design import refresh
+        refresh(self)
 
     def _create_chat(self):
         self.chat_store.create()
@@ -510,6 +532,8 @@ class TextMainWindow(QMainWindow):
             self._render_chat()
 
     def _render_chat(self):
+        from .design import refresh
+        refresh(self)
         self._show_attachments()
         self.chat.clear_messages()
         for message in self.chat_store.get()['messages']:
