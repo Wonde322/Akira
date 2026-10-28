@@ -45,7 +45,7 @@ class ProactiveInbox:
     def list(self, limit=20, unread_only=False):
         try: limit = int(limit)
         except Exception: limit = 20
-        limit = max(1, min(limit, 100))
+        limit = max(1, min(limit, MAX_ITEMS))
         with self._lock:
             items = self._items if not unread_only else [item for item in self._items if not item.get("read")]
             return [dict(item) for item in items[-limit:]][::-1]

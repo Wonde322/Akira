@@ -1,8 +1,15 @@
 import importlib
+import os
 import sys
+import tempfile
 import types
 
 import pytest
+
+# Set before test modules are collected and import runtime singletons.
+# Tests must never read or write the checkout's or the user's live state.
+_TEST_RUNTIME = tempfile.TemporaryDirectory(prefix="akira-pytest-")
+os.environ["AKIRA_RUNTIME_DIR"] = _TEST_RUNTIME.name
 
 
 # Keep execution_context loaded: runtimes imported during test collection hold

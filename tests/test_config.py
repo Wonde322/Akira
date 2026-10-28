@@ -52,3 +52,23 @@ def test_create_groq_client_is_lazy(monkeypatch, tmp_path):
     finally:
         sys.modules.pop("config", None)
         sys.modules.pop("groq", None)
+
+def test_default_runtime_ignores_checkout_state(tmp_path):
+    import json, os, subprocess
+    script = '''
+import json
+from pathlib import Path
+Path.home = staticmethod(lambda: Path(__import__('sys').argv[1]))
+import config
+from proactive_inbox import ProactiveInbox
+print(json.dumps({'directory': str(config.RUNTIME_DIR), 'source': str(config.PROJECT_ROOT / 'runtime'), 'items': ProactiveInbox().list()}))
+'''
+    env = dict(os.environ)
+    env.pop('AKIRA_RUNTIME_DIR', None)
+    env.pop('XDG_STATE_HOME', None)
+    env.pop('LOCALAPPDATA', None)
+    result = subprocess.run([sys.executable, '-c', script, str(tmp_path)], env=env, capture_output=True, text=True, check=True, timeout=10)
+    state = json.loads(result.stdout)
+    assert state['directory'] != state['source']
+    assert str(tmp_path) in state['directory']
+    assert state['items'] == []

@@ -1,6 +1,7 @@
 """Delivery bridge between the proactive inbox and Akira's live surfaces."""
 from __future__ import annotations
 import threading
+from datetime import datetime, timedelta
 from event_bus import emit_event
 from proactive_inbox import get_proactive_inbox
 from proactive_action_execution import get_proactive_action_executor
@@ -17,7 +18,7 @@ class ProactiveDelivery:
         self._feedback_store = feedback_store
         self._lock = threading.RLock(); self._pending_questions = {}
 
-    def discard_startup_notifications(self, limit=100):
+    def discard_startup_notifications(self, limit=200):
         """Acknowledge stale notify items left from an earlier app process.
 
         Persistent notifications are useful for non-UI consumers, but replaying
@@ -25,9 +26,19 @@ class ProactiveDelivery:
         internal context into the conversation. Pending questions are preserved.
         """
         discarded = []
+        now = datetime.now().astimezone()
         for item in self._inbox.list(limit=limit, unread_only=True):
-            if item.get("action") == "ask_user" or item.get("event_type") in {"task.completed", "task.failed", "task.cancelled", "task.interrupted"}:
+            if item.get("action") == "ask_user":
                 continue
+            if item.get("event_type") in {"task.completed", "task.failed", "task.cancelled", "task.interrupted"}:
+                try:
+                    created = datetime.fromisoformat(str(item.get("created_at", "")).replace("Z", "+00:00"))
+                    if created.tzinfo is None:
+                        created = created.astimezone()
+                    if timedelta(minutes=-5) <= now - created <= timedelta(days=1):
+                        continue
+                except (TypeError, ValueError):
+                    pass
             item_id = item.get("id")
             if not item_id:
                 continue

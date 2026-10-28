@@ -2,11 +2,26 @@
 
 import os
 import subprocess
+import sys
 import threading
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-RUNTIME_DIR = PROJECT_ROOT / "runtime"
+def _runtime_directory():
+    override = os.environ.get("AKIRA_RUNTIME_DIR")
+    if override:
+        return Path(override).expanduser().resolve()
+    if sys.platform == "darwin":
+        root = Path.home() / "Library" / "Application Support"
+    elif sys.platform == "win32":
+        root = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local")))
+    else:
+        root = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local" / "state")))
+    return root / "Akira" / "runtime"
+
+
+# Never load mutable state shipped in a source checkout.
+RUNTIME_DIR = _runtime_directory()
 GROQ_API_KEY_ENV = "GROQ_API_KEY"
 MODEL = "openai/gpt-oss-120b"
 MAX_HISTORY = 12
