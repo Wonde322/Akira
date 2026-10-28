@@ -117,3 +117,24 @@ def test_header_controls_align_and_accept_clicks_across_surface(window, monkeypa
     count = len(window.chat_store.chats)
     QTest.mouseClick(window.new_chat, Qt.MouseButton.LeftButton, pos=QPoint(5, 5))
     assert len(window.chat_store.chats) == count + 1
+
+
+def test_chat_popup_has_explicit_geometry_rows_and_selection(window, qapp):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    window._create_chat()
+    window.show()
+    qapp.processEvents()
+    selector = window.chat_selector
+    selector.showPopup()
+    qapp.processEvents()
+    assert selector.popup.width() == selector.width()
+    assert selector.popup.y() == selector.mapToGlobal(selector.rect().bottomLeft()).y() + 9
+    assert selector.popup_list.item(0).sizeHint().height() == 44
+    target = selector.popup_list.visualItemRect(selector.popup_list.item(0)).center()
+    QTest.mouseClick(selector.popup_list.viewport(), Qt.MouseButton.LeftButton, pos=target)
+    assert selector.currentIndex() == 0
+    assert not selector.popup.isVisible()
+    selector.showPopup()
+    QTest.keyClick(selector.popup_list, Qt.Key.Key_Escape)
+    assert not selector.popup.isVisible()

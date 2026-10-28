@@ -8,11 +8,12 @@ from __future__ import annotations
 from collections import deque
 import math
 
-from PySide6.QtCore import Qt, QTimer, QElapsedTimer, QRectF, QPointF
+from PySide6.QtCore import Qt, QTimer, QElapsedTimer, QRectF, QPointF, QPoint, QSize
 from PySide6.QtGui import QFont, QPainter, QColor
 from PySide6.QtWidgets import (
     QComboBox,
-    QListView,
+    QListWidget,
+    QListWidgetItem,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -32,6 +33,57 @@ from .confirmation import ConfirmationService
 
 class ChatSelector(QComboBox):
     """Open the history menu from the whole control, including its padding."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.popup = QFrame(self, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        self.popup.setObjectName("chatPopup")
+        self.popup.setStyleSheet(
+            "QFrame#chatPopup { background:#1e1e24; border:1px solid #3a3a44; border-radius:12px; }"
+            "QListWidget { background:transparent; border:0; outline:0; color:#e8e8ee; font-size:13px; }"
+            "QListWidget::item { padding:0 12px; border:0; border-radius:7px; }"
+            "QListWidget::item:hover { background:#2b2b34; }"
+            "QListWidget::item:selected { background:#49303a; color:#fff; }"
+            "QScrollBar:vertical { background:transparent; width:6px; margin:0; }"
+            "QScrollBar::handle:vertical { background:#555560; border-radius:3px; min-height:20px; }"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; }"
+            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background:transparent; }"
+        )
+        layout = QVBoxLayout(self.popup)
+        layout.setContentsMargins(7, 7, 7, 7)
+        self.popup_list = QListWidget()
+        self.popup_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.popup_list.setSpacing(2)
+        layout.addWidget(self.popup_list)
+        self.popup_list.itemClicked.connect(self._choose_item)
+        self.popup_list.itemActivated.connect(self._choose_item)
+
+    def _choose_item(self, item):
+        self.setCurrentIndex(self.popup_list.row(item))
+        self.hidePopup()
+        self.setFocus()
+
+    def showPopup(self):
+        self.popup_list.clear()
+        for index in range(self.count()):
+            item = QListWidgetItem(self.itemText(index))
+            item.setSizeHint(QSize(0, 44))
+            self.popup_list.addItem(item)
+        self.popup_list.setCurrentRow(self.currentIndex())
+        width = self.width()
+        height = min(self.count(), 7) * 46 + 16
+        position = self.mapToGlobal(QPoint(0, self.height() + 8))
+        screen = self.screen().availableGeometry()
+        if position.y() + height > screen.bottom():
+            position.setY(max(screen.top(), self.mapToGlobal(QPoint(0, 0)).y() - height - 8))
+        position.setX(max(screen.left(), min(position.x(), screen.right() - width + 1)))
+        self.popup.setGeometry(position.x(), position.y(), width, height)
+        self.popup.show()
+        self.popup_list.setFocus()
+        self.popup_list.scrollToItem(self.popup_list.currentItem())
+
+    def hidePopup(self):
+        self.popup.hide()
+
     def paintEvent(self, event):
         super().paintEvent(event)
         painter = QPainter(self)
@@ -216,10 +268,6 @@ class TextMainWindow(QMainWindow):
         self.chat_selector = ChatSelector()
         self.chat_selector.setMinimumWidth(180)
         self.chat_selector.setMaximumWidth(320)
-        # macOS native combo menus ignore item padding and row-height styles.
-        self.chat_selector.setView(QListView())
-        self.chat_selector.setMaxVisibleItems(10)
-        self.chat_selector.view().setMinimumWidth(360)
         self.chat_selector.setFixedHeight(40)
         self.chat_selector.setCursor(Qt.CursorShape.PointingHandCursor)
         self.chat_selector.setAccessibleName("История чатов")
@@ -229,10 +277,7 @@ class TextMainWindow(QMainWindow):
             "QComboBox:hover { background:#282830; border-color:#555560; }"
             "QComboBox:focus { border-color:#a93b4c; }"
             "QComboBox::drop-down { border:0; width:28px; }"
-            "QComboBox::down-arrow { image:none;"
-            "QComboBox QAbstractItemView { background:#1e1e24; color:#e8e8ee; "
-            "selection-background-color:#702432; border:1px solid #3a3a44; outline:0; padding:6px; }"
-            "QComboBox QAbstractItemView::item { min-height:42px; padding:4px 14px; border-radius:6px; }"
+            "QComboBox::down-arrow { image:none; }"
         )
         self.chat_selector.currentIndexChanged.connect(self._switch_chat)
         header_row.addWidget(self.chat_selector, 1)
