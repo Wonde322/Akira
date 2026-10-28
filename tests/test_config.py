@@ -48,7 +48,7 @@ def test_create_groq_client_is_lazy(monkeypatch, tmp_path):
         client = module.create_groq_client()
 
         assert isinstance(client, FakeGroq)
-        assert client.kwargs == {"api_key": "test-key"}
+        assert client.kwargs == {"api_key": "test-key", "timeout": 30.0, "max_retries": 0}
     finally:
         sys.modules.pop("config", None)
         sys.modules.pop("groq", None)

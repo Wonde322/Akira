@@ -4,5 +4,6 @@ numpy
 PySide6
 sounddevice
 soundfile
-webrtcvad
+webrtcvad-wheels
+pyobjc-framework-Quartz; sys_platform == "darwin"
 pytest

@@ -293,8 +293,11 @@ def _execute(function_name, arguments):
             )
 
     # --------------------------------------------------------
-    # Permission belongs to the resolved concrete tool.
+    # Unknown tools cannot request permission or execute anything.
     # --------------------------------------------------------
+
+    if function is None:
+        return _tool_result(False, "unknown", "Неизвестный инструмент."), "unknown"
 
     permission = get_permission(
         resolved_name
@@ -331,21 +334,6 @@ def _execute(function_name, arguments):
 
     else:
         decision = "auto"
-
-    # --------------------------------------------------------
-    # Unknown tool.
-    # --------------------------------------------------------
-
-    if function is None:
-
-        return (
-            _tool_result(
-                False,
-                "unknown",
-                "Неизвестный инструмент.",
-            ),
-            decision,
-        )
 
     # --------------------------------------------------------
     # Execute.

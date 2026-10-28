@@ -171,4 +171,4 @@ def test_worker_submit_boundary_accepts_normal_messages(qapp, message):
     from desktop_app.worker import BrainWorker
     worker = BrainWorker()
     worker.submit(message)
-    assert worker._queue.get_nowait() == message
+    assert worker._queue.get_nowait()[0] == message

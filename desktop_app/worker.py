@@ -65,10 +65,33 @@ class BrainWorker(QThread):
         return str(message or "").strip().casefold().strip(" .,!?:;") in _STOP_WORDS
 
     def _gateway_instance(self):
-        if self._gateway is None:
-            from akira_gateway import create_gateway
-            self._gateway = create_gateway()
-        return self._gateway
+        with self._lock:
+            if self._gateway is None:
+                from akira_gateway import create_gateway
+                self._gateway = create_gateway()
+            return self._gateway
+
+    def _prepare_start(self):
+        """Remove shutdown sentinels before starting a fresh worker thread."""
+        with self._lock:
+            self._stop_event.clear()
+            pending = []
+            while True:
+                try:
+                    item = self._queue.get_nowait()
+                except queue.Empty:
+                    break
+                if item is not None:
+                    pending.append(item)
+            for item in pending:
+                self._queue.put(item)
+
+    def start(self, priority=QThread.Priority.InheritPriority):
+        with self._lock:
+            if self.isRunning():
+                return
+            self._prepare_start()
+            super().start(priority)
 
     def submit(self, message):
         if message is None:
@@ -88,27 +111,25 @@ class BrainWorker(QThread):
     def cancel_current(self):
         with self._lock:
             request_id = self._active_request_id
+            # Invalidate late results even if a provider raises during cancel.
+            self._active_request_id = None
         if not request_id:
             return False
-        return bool(self._gateway_instance().cancel(request_id))
+        self._gateway_instance().cancel(request_id)
+        return True
 
     def request_stop(self):
         with self._lock:
             self._stop_event.set()
-            request_id = self._active_request_id
             while True:
                 try:
                     self._queue.get_nowait()
                 except queue.Empty:
                     break
-        if request_id:
-            self._gateway_instance().cancel(request_id)
-        if not self.isRunning():
-            return
+        self.cancel_current()
         self._queue.put(None)
 
     def run(self):
-        self._stop_event.clear()
         while True:
             try:
                 item = self._queue.get(timeout=0.1)

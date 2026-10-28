@@ -13,7 +13,8 @@ def _drain(worker):
     items = []
     while True:
         try:
-            items.append(worker._queue.get_nowait())
+            item = worker._queue.get_nowait()
+            items.append(item[0] if item is not None else None)
         except queue.Empty:
             return items
 
@@ -23,11 +24,11 @@ def test_prepare_start_clears_stop_flag(qapp):
 
     worker = BrainWorker()
     worker.request_stop()
-    assert worker._stop is True
+    assert worker._stop_event.is_set() is True
 
     worker._prepare_start()
 
-    assert worker._stop is False
+    assert worker._stop_event.is_set() is False
 
 
 def test_prepare_start_discards_stale_stop_sentinel(qapp):
@@ -50,7 +51,7 @@ def test_prepare_start_preserves_message_queued_before_start(qapp):
     assert _drain(worker) == ["первая команда"]
 
 
-def test_prepare_start_preserves_multiple_messages(qapp):
+def test_shutdown_discards_pending_messages(qapp):
     from desktop_app.worker import BrainWorker
 
     worker = BrainWorker()
@@ -59,7 +60,7 @@ def test_prepare_start_preserves_multiple_messages(qapp):
     worker.request_stop()
     worker._prepare_start()
 
-    assert _drain(worker) == ["первая", "вторая"]
+    assert _drain(worker) == []
 
 
 def test_prepare_start_removes_only_none_sentinels(qapp):
@@ -91,7 +92,7 @@ def test_prepare_start_is_idempotent(qapp):
     worker._prepare_start()
     worker._prepare_start()
 
-    assert worker._stop is False
+    assert worker._stop_event.is_set() is False
     assert _drain(worker) == ["команда"]
 
 
@@ -103,4 +104,4 @@ def test_stop_then_prepare_start_keeps_session(qapp):
     worker._prepare_start()
 
     assert worker.session_id == "desktop-test"
-    assert worker._stop is False
+    assert worker._stop_event.is_set() is False

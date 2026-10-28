@@ -134,9 +134,9 @@ def test_brain_passes_structured_results_through(isolated_project, monkeypatch):
 
     brain = isolated_project("brain")
 
-    monkeypatch.setattr(brain, "get_permission", lambda _: "auto")
+    monkeypatch.setattr(brain._agent_loop, "get_permission", lambda _: "auto")
     monkeypatch.setattr(
-        brain,
+        brain._agent_loop,
         "get_tool_implementation",
         lambda _: lambda **kw: protocol.ok({"content": "hello"}),
     )

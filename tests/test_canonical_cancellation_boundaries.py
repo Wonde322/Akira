@@ -93,3 +93,17 @@ def test_cancelled_turn_clears_unfinished_computer_task(cancelled_turn, monkeypa
     with pytest.raises(execution.ExecutionCancelled):
         loop.ask("new goal", session_id=session.session_id)
     assert session.task is None
+
+
+def test_unknown_canonical_tool_does_not_prompt(cancelled_turn, monkeypatch):
+    loop, execution, event = cancelled_turn
+    monkeypatch.setattr(loop, "get_tool_implementation", lambda name: None)
+    monkeypatch.setattr(loop, "resolve_capability", lambda name: {"success": False})
+
+    def unexpected_permission(*args):
+        raise AssertionError("Unknown tools cannot ask for permission")
+
+    monkeypatch.setattr(loop, "get_permission", unexpected_permission)
+    result, decision = loop._execute("missing_tool", {})
+    assert result["error"] == "unknown"
+    assert decision == "unknown"

@@ -87,4 +87,4 @@ def test_unknown_tool_is_not_executed(isolated_project, monkeypatch):
         "error": "unknown",
         "output": "Неизвестный инструмент.",
     }
-    assert decision == "auto"
+    assert decision == "unknown"
