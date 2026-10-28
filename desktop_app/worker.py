@@ -73,6 +73,7 @@ class BrainWorker(QThread):
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
         self._active_request_id = None
+        self._active_session_id = None
         self._gateway = None
 
     @staticmethod
@@ -123,6 +124,22 @@ class BrainWorker(QThread):
                 return
             self._queue.put((message, str(uuid.uuid4()), session_id or self.session_id, history))
 
+    def discard_pending(self, session_id):
+        with self._lock:
+            keep = []
+            while True:
+                try:
+                    item = self._queue.get_nowait()
+                except queue.Empty:
+                    break
+                if item is None or item[2] != session_id:
+                    keep.append(item)
+            for item in keep:
+                self._queue.put(item)
+            cancel_active = self._active_session_id == session_id
+        if cancel_active:
+            self.cancel_current()
+
     def cancel_current(self):
         with self._lock:
             request_id = self._active_request_id
@@ -161,6 +178,7 @@ class BrainWorker(QThread):
                 if self._stop_event.is_set():
                     continue
                 self._active_request_id = request_id
+                self._active_session_id = session_id
             self.chat_busy.emit(session_id, True)
             self.busy.emit(True)
 
@@ -169,7 +187,7 @@ class BrainWorker(QThread):
                     from agent_loop import get_session
                     session = get_session(session_id)
                     if not session.history:
-                        session.history = [{'role': 'assistant' if m['role'] == 'akira' else 'user', 'content': m['text']} for m in history]
+                        session.history = [{'role': 'assistant' if m['role'] == 'akira' else 'user', 'content': m.get('context', m['text'])} for m in history]
                         session.trim()
                 result = self._gateway_instance().submit_text(
                     message,
@@ -193,5 +211,6 @@ class BrainWorker(QThread):
                 with self._lock:
                     if self._active_request_id == request_id:
                         self._active_request_id = None
+                    self._active_session_id = None
                 self.chat_busy.emit(session_id, False)
                 self.busy.emit(False)

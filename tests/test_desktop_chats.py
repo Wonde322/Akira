@@ -138,3 +138,42 @@ def test_chat_popup_has_explicit_geometry_rows_and_selection(window, qapp):
     selector.showPopup()
     QTest.keyClick(selector.popup_list, Qt.Key.Key_Escape)
     assert not selector.popup.isVisible()
+
+
+def test_single_action_switches_between_send_and_cancel(window, monkeypatch):
+    calls = []
+    monkeypatch.setattr(window, '_cancel_current', lambda: calls.append('stop'))
+    window._on_busy(True)
+    assert window.send.text() == '■'
+    window.send.click()
+    assert calls == ['stop']
+    window._on_busy(False)
+    assert window.send.text() == '↑'
+    assert window.send.isEnabled()
+
+
+def test_delete_chat_discards_queued_work_and_late_replies(window, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    deleted = window.chat_store.active
+    window.worker.submit('Не выполнять', session_id=deleted)
+    monkeypatch.setattr(QMessageBox, 'question', lambda *args: QMessageBox.StandardButton.Yes)
+    window._delete_chat()
+    assert deleted not in [c['id'] for c in window.chat_store.chats]
+    assert window.worker._queue.empty()
+    window._chat_answer(deleted, 'Поздний ответ')
+    assert not window.chat_store.get()['messages']
+
+
+def test_file_picker_adds_paths_to_request_and_persisted_context(window, monkeypatch, tmp_path):
+    from PySide6.QtWidgets import QFileDialog
+    path = tmp_path / 'notes.txt'
+    path.write_text('Текст файла', encoding='utf-8')
+    monkeypatch.setattr(QFileDialog, 'getOpenFileNames', lambda *args: ([str(path)], ''))
+    window.attach.click()
+    assert path.name in window.attachment_label.text()
+    window.input.setPlainText('Прочитай файл')
+    window.submit_current()
+    message = window.worker._queue.get_nowait()[0]
+    assert str(path) in message
+    assert str(path) in window.chat_store.get()['messages'][-1]['context']
+    assert not window._attachments

@@ -31,12 +31,23 @@ class ChatStore:
         self.save()
         return chat
 
+    def delete(self, chat_id):
+        self.chats = [chat for chat in self.chats if chat['id'] != chat_id]
+        if not self.chats:
+            self.create()
+        elif self.active == chat_id:
+            self.active = self.chats[0]['id']
+        self.save()
+
     def get(self, chat_id=None):
         return next(c for c in self.chats if c['id'] == (chat_id or self.active))
 
-    def append(self, text, role, chat_id=None):
+    def append(self, text, role, chat_id=None, context=None):
         chat = self.get(chat_id)
-        chat['messages'].append({'text': str(text), 'role': role})
+        message = {'text': str(text), 'role': role}
+        if context is not None:
+            message['context'] = str(context)
+        chat['messages'].append(message)
         if role == 'user' and chat['title'] == 'Новый чат':
             chat['title'] = ' '.join(str(text).split())[:48]
         self.save()
