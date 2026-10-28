@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-RUNTIME_DIR = ROOT / "runtime"
+from config import RUNTIME_DIR
 SCHEDULE_FILE = RUNTIME_DIR / "scheduled_jobs.json"
 MAX_JOBS = 200
 
@@ -154,10 +154,17 @@ class Scheduler:
                 current["last_run"] = _iso(now)
                 current["run_count"] = int(current.get("run_count") or 0) + 1
                 if current.get("kind") == "interval":
-                    interval = int(current.get("interval_seconds") or 0)
+                    try:
+                        interval = int(current.get("interval_seconds") or 0)
+                    except (TypeError, ValueError):
+                        interval = 0
+                    if interval <= 0:
+                        current["enabled"] = False
+                        current["last_error"] = "invalid_interval"
+                        continue
                     next_run = _parse_time(current.get("next_run")) or now
-                    while next_run <= now:
-                        next_run += timedelta(seconds=interval)
+                    skipped = int((now - next_run).total_seconds() // interval) + 1
+                    next_run += timedelta(seconds=interval * skipped)
                     current["next_run"] = _iso(next_run)
                 else:
                     current["enabled"] = False
@@ -188,6 +195,12 @@ class Scheduler:
                         launched.extend(spawn)
                     elif not result.get("success"):
                         current["last_error"] = result.get("error") or result.get("output")
+                    else:
+                        current["last_error"] = "schedule_not_started"
+                    if not spawn:
+                        current["enabled"] = True
+                        current["next_run"] = _iso(now + timedelta(seconds=10))
+                        current["run_count"] = max(0, current["run_count"] - 1)
                     self._save()
         return {"success": True, "launched": launched, "output": json.dumps(launched, ensure_ascii=False)}
 

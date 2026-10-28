@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-RUNTIME_DIR = ROOT / "runtime"
+from config import RUNTIME_DIR
 EVENT_LOG = RUNTIME_DIR / "events.jsonl"
 TRIGGER_FILE = RUNTIME_DIR / "triggers.json"
 MAX_TRIGGERS = 200

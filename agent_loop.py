@@ -3,6 +3,7 @@ from collections import OrderedDict
 import json
 
 from execution_context import ExecutionCancelled, raise_if_execution_cancelled
+from computer_access import desktop_access
 
 from audit import record_tool_execution
 from capabilities.observation import (
@@ -342,9 +343,8 @@ def _execute(function_name, arguments):
     raise_if_execution_cancelled()
     try:
 
-        output = function(
-            **arguments
-        )
+        with desktop_access(resolved_name):
+            output = function(**arguments)
 
     except ExecutionCancelled:
         raise
@@ -364,7 +364,10 @@ def _execute(function_name, arguments):
     # Structured result.
     # --------------------------------------------------------
 
-    if is_structured(output):
+    if is_structured(output) or (
+        isinstance(output, dict) and isinstance(output.get("success"), bool)
+        and ("output" in output or "error" in output)
+    ):
 
         # Structured tool results are already the canonical result.
         # Do not mutate them by injecting execution metadata.
@@ -612,7 +615,8 @@ def _inject_observation(session, messages, turn_messages, source=None):
     from capabilities.observe import observe as observe_capability
 
     raise_if_execution_cancelled()
-    result = observe_capability(interpret=True)
+    with desktop_access("observe"):
+        result = observe_capability(interpret=True)
     raise_if_execution_cancelled()
     record_tool_execution(
         "observe",

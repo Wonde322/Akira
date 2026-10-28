@@ -5,6 +5,8 @@ is owned by the Qt window and requests are serialized by BrainWorker.
 """
 from __future__ import annotations
 
+from collections import deque
+
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
@@ -93,11 +95,13 @@ class TextInput(QPlainTextEdit):
 class TextMainWindow(QMainWindow):
     """Canonical desktop surface while voice is disabled."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, services=None, proactive=None):
         super().__init__(parent)
         self._closing = False
         self._confirmation_dialog = None
         self._confirmation_request = None
+        self._confirmation_queue = deque()
+        self._question_dialog = None
         self.setWindowTitle("Akira")
         self.resize(860, 700)
         self.setStyleSheet("QMainWindow { background:#101013; }")
@@ -150,6 +154,18 @@ class TextMainWindow(QMainWindow):
         self.worker.error.connect(self._on_error)
         self.worker.busy.connect(self._on_busy)
         self.worker.finished.connect(self._on_worker_finished)
+        from .services import DesktopServices
+        from .proactive_surface import ProactiveDesktopBridge
+        self.services = services if services is not None else DesktopServices()
+        self.proactive_surface = proactive if proactive is not None else ProactiveDesktopBridge(parent=self)
+        self.proactive_surface.notification.connect(self._on_notification)
+        self.proactive_surface.question.connect(self._on_question)
+        # Discard stale chat notifications before startup recovery creates new ones.
+        self.proactive_surface.start()
+        self.services.start()
+        self._close_timer = QTimer(self)
+        self._close_timer.setInterval(100)
+        self._close_timer.timeout.connect(self._finish_close)
         self.worker.start()
         self.input.setFocus()
 
@@ -166,23 +182,27 @@ class TextMainWindow(QMainWindow):
 
     def _on_busy(self, busy: bool):
         self.stop.setEnabled(busy and not self._closing)
-        if not busy and self._confirmation_dialog is not None:
-            self._confirmation_dialog.reject()
 
     def _cancel_current(self):
+        request_id = self.worker._active_request_id
         if self.worker.cancel_current():
             self.chat.add_message("Остановил.", "akira")
-        if self._confirmation_dialog is not None:
+        if self._confirmation_dialog is not None and request_id and (self._confirmation_request or {}).get("task_id") == request_id:
             self._confirmation_dialog.reject()
 
     def _on_confirmation(self, tool_name, description, arguments, request):
-        if self._closing or self._confirmation_dialog is not None or request["answered"].is_set():
+        if self._closing or request["answered"].is_set():
             request["answered"].set()
+            return
+        if self._confirmation_dialog is not None:
+            self._confirmation_queue.append((tool_name, description, arguments, request))
             return
         dialog = QMessageBox(self)
         dialog.setWindowTitle("Разрешить действие?")
         dialog.setTextFormat(Qt.TextFormat.PlainText)
         dialog.setText(description)
+        if request.get("goal"):
+            dialog.setInformativeText("Задача: " + str(request["goal"])[:200])
         dialog.setDetailedText(str(arguments))
         dialog.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         dialog.setDefaultButton(QMessageBox.StandardButton.No)
@@ -196,6 +216,7 @@ class TextMainWindow(QMainWindow):
             self._confirmation_dialog = None
             self._confirmation_request = None
             dialog.deleteLater()
+            QTimer.singleShot(0, self._next_confirmation)
 
         dialog.finished.connect(finish)
         timer = QTimer(dialog)
@@ -206,9 +227,60 @@ class TextMainWindow(QMainWindow):
         dialog.setWindowModality(Qt.WindowModality.NonModal)
         dialog.show()
 
+    def _next_confirmation(self):
+        while self._confirmation_queue:
+            item = self._confirmation_queue.popleft()
+            if not item[3]["answered"].is_set():
+                self._on_confirmation(*item)
+                return
+
     def _on_worker_finished(self):
         if self._closing:
             QTimer.singleShot(0, self.close)
+
+    def _on_notification(self, item):
+        message = str(item.get("message") or "").strip()
+        if message:
+            self.chat.add_message(message, "akira")
+
+    def _on_question(self, item):
+        from PySide6.QtWidgets import QInputDialog
+        if self._closing:
+            return
+        dialog = QInputDialog(self)
+        dialog.setWindowTitle("Акира спрашивает")
+        dialog.setLabelText(str(item.get("message") or ""))
+        dialog.setInputMode(QInputDialog.InputMode.TextInput)
+        proposals = [p for p in item.get("proposals", []) if isinstance(p, dict) and p.get("id") and p.get("label")]
+        if proposals:
+            dialog.setComboBoxItems([p["label"] for p in proposals] + ["Пропустить"])
+            dialog.setComboBoxEditable(False)
+            dialog.setTextValue("Пропустить")
+        self._question_dialog = dialog
+        self._on_notification(item)
+
+        def finish(result):
+            text = (dialog.textValue().strip() if result else "") or "Пропустить"
+            if text and not self._closing:
+                proposal = next((p for p in proposals if p["label"] == text), None)
+                if text == "Пропустить":
+                    response = self.proactive_surface.dismiss()
+                else:
+                    response = self.proactive_surface.select(proposal["id"]) if proposal else self.proactive_surface.answer(text)
+                if response.get("success"):
+                    self.chat.add_message(text, "user")
+            if self._question_dialog is dialog:
+                self._question_dialog = None
+            dialog.deleteLater()
+
+        dialog.finished.connect(finish)
+        dialog.setWindowModality(Qt.WindowModality.NonModal)
+        dialog.show()
+
+    def _finish_close(self):
+        if not self.worker.isRunning() and not self.services.is_running():
+            self._close_timer.stop()
+            self.close()
 
     def _on_answer(self, answer: str):
         self.chat.add_message(answer, "akira")
@@ -227,12 +299,21 @@ class TextMainWindow(QMainWindow):
         self.input.setEnabled(False)
         self.send.setEnabled(False)
         self.stop.setEnabled(False)
+        self.proactive_surface.stop()
+        if self._question_dialog is not None:
+            self._question_dialog.reject()
         if self._confirmation_dialog is not None:
             self._confirmation_dialog.reject()
+        while self._confirmation_queue:
+            request = self._confirmation_queue.popleft()[3]
+            request["allowed"] = False
+            request["answered"].set()
         self.worker.request_stop()
-        if self.worker.isRunning():
+        self.services.request_stop()
+        if self.worker.isRunning() or self.services.is_running():
             # Keep the QThread owner alive until any in-flight call returns.
             event.ignore()
+            self._close_timer.start()
             return
         from permissions import deny_all, set_confirmation_provider
         set_confirmation_provider(deny_all)

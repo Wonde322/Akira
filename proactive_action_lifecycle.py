@@ -6,8 +6,10 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
+from config import RUNTIME_DIR
+
 ROOT = Path(__file__).resolve().parent
-DEFAULT_FILE = ROOT / "runtime" / "proactive_action_lifecycle.json"
+DEFAULT_FILE = RUNTIME_DIR / "proactive_action_lifecycle.json"
 TERMINAL_STATUSES = {"completed", "failed", "cancelled", "interrupted"}
 KNOWN_STATUSES = TERMINAL_STATUSES | {"running"}
 

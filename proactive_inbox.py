@@ -7,8 +7,10 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
+from config import RUNTIME_DIR
+
 ROOT = Path(__file__).resolve().parent
-INBOX_FILE = ROOT / "runtime" / "proactive_inbox.json"
+INBOX_FILE = RUNTIME_DIR / "proactive_inbox.json"
 MAX_ITEMS = 200
 
 

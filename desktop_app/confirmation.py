@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 import time
 from PySide6.QtCore import QObject, Signal
-from execution_context import execution_cancelled
+from execution_context import current_execution, execution_cancelled
 
 
 class ConfirmationService(QObject):
@@ -23,6 +23,9 @@ class ConfirmationService(QObject):
         if execution_cancelled():
             return False
         request={"tool":tool_name,"arguments":dict(arguments or {}),"allowed":False,"answered":threading.Event()}
+        context = current_execution()
+        if context is not None:
+            request.update(task_id=context.task_id, goal=context.goal)
         self.request_received.emit(tool_name,self._description(tool_name,request["arguments"]),request["arguments"],request)
         deadline = time.monotonic() + self.timeout
         while not request["answered"].is_set():

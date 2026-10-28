@@ -8,8 +8,10 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from config import RUNTIME_DIR
+
 ROOT = Path(__file__).resolve().parent
-GOALS_FILE = ROOT / "runtime" / "proactive_goals.json"
+GOALS_FILE = RUNTIME_DIR / "proactive_goals.json"
 PRIORITY_WEIGHTS = {"low": 0.25, "normal": 0.5, "high": 0.75, "critical": 1.0}
 _TERMINAL = {"completed", "cancelled", "failed", "archived"}
 _STOP = {"и", "в", "во", "на", "с", "со", "для", "по", "к", "из", "the", "a", "an", "to", "of", "for", "and", "with", "in", "on"}

@@ -6,6 +6,7 @@ import threading
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent
+RUNTIME_DIR = PROJECT_ROOT / "runtime"
 GROQ_API_KEY_ENV = "GROQ_API_KEY"
 MODEL = "openai/gpt-oss-120b"
 MAX_HISTORY = 12
@@ -83,5 +84,5 @@ def create_groq_client():
 
 BACKGROUND_TASK_MAX_CONCURRENT = 3
 BACKGROUND_TASK_MAX_STORED = 100
-BACKGROUND_TASK_DIR = PROJECT_ROOT / "runtime" / "tasks"
-BACKGROUND_TASK_FILE = PROJECT_ROOT / "runtime" / "background_tasks.json"
+BACKGROUND_TASK_DIR = RUNTIME_DIR / "tasks"
+BACKGROUND_TASK_FILE = RUNTIME_DIR / "background_tasks.json"

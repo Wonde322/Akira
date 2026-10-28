@@ -21,6 +21,8 @@ def window(qapp, monkeypatch):
     from desktop_app.text_window import TextMainWindow
 
     monkeypatch.setattr(BrainWorker, "start", lambda self: None)
+    monkeypatch.setattr("desktop_app.services.DesktopServices.start", lambda self: None)
+    monkeypatch.setattr("desktop_app.proactive_surface.ProactiveDesktopBridge.start", lambda self: None)
     window = TextMainWindow()
     yield window
     window.close()
@@ -195,3 +197,20 @@ def test_expired_confirmation_cannot_be_approved_later(window, qapp):
     window._on_confirmation("delete", "Удалить", {}, request)
     assert window._confirmation_dialog is None
     assert request["allowed"] is False
+
+
+def test_concurrent_permission_requests_are_queued_not_silently_denied(window, qapp):
+    first = {'allowed': False, 'answered': threading.Event()}
+    second = {'allowed': False, 'answered': threading.Event()}
+    window._on_confirmation('shell', 'first', {}, first)
+    window._on_confirmation('delete', 'second', {}, second)
+    assert not second['answered'].is_set()
+    # Finishing a foreground request must not close a background permission.
+    window._on_busy(False)
+    assert not first['answered'].is_set()
+    window._confirmation_dialog.done(QMessageBox.StandardButton.Yes)
+    wait_until(qapp, lambda: window._confirmation_request is second)
+    window._confirmation_dialog.done(QMessageBox.StandardButton.No)
+    assert first['allowed'] is True
+    assert second['allowed'] is False
+    assert second['answered'].is_set()

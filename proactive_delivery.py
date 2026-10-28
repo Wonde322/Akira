@@ -26,7 +26,7 @@ class ProactiveDelivery:
         """
         discarded = []
         for item in self._inbox.list(limit=limit, unread_only=True):
-            if item.get("action") == "ask_user":
+            if item.get("action") == "ask_user" or item.get("event_type") in {"task.completed", "task.failed", "task.cancelled", "task.interrupted"}:
                 continue
             item_id = item.get("id")
             if not item_id:
@@ -76,6 +76,12 @@ class ProactiveDelivery:
             if handled.get("handled") and not handled.get("success",False):return {**result,"success":False,"error":"action_handler_failed"}
         with self._lock:self._pending_questions.pop(key,None)
         acknowledgement=self._inbox.acknowledge(item.get("id")); result["item"]=acknowledgement.get("item"); return result
+
+    def dismiss(self, item_id):
+        item = self._take_pending(item_id)
+        if item is None:
+            return {"success": False, "error": "question_not_pending"}
+        return self._inbox.acknowledge(item.get("id"))
 
 _delivery=None; _delivery_lock=threading.Lock()
 def get_proactive_delivery():

@@ -23,6 +23,7 @@ class ExecutionContext:
     mode: str
     task_id: Optional[str] = None
     _cancel_event: Event | None = None
+    _desktop_owned: bool = False
 
     @property
     def cancelled(self) -> bool:

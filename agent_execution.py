@@ -11,6 +11,8 @@ from capabilities.protocol import is_structured
 from capability_layer import resolve_capability
 from permissions import get_permission, request_confirmation
 from tool_registry import get_tool_implementation
+from computer_access import desktop_access
+from execution_context import ExecutionCancelled
 
 
 def tool_result(success, error, output):
@@ -48,11 +50,17 @@ def execute(function_name, arguments):
         decision = "auto"
 
     try:
-        output = function(**arguments)
+        with desktop_access(resolved_name):
+            output = function(**arguments)
+    except ExecutionCancelled:
+        raise
     except Exception as error:
         return tool_result(False, "error", "Ошибка выполнения инструмента: " + str(error)), decision
 
-    if is_structured(output):
+    if is_structured(output) or (
+        isinstance(output, dict) and isinstance(output.get("success"), bool)
+        and ("output" in output or "error" in output)
+    ):
         result = output
     else:
         result = tool_result(True, None, output)

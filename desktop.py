@@ -1,6 +1,7 @@
 """Точка входа desktop-приложения Akira."""
 
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -25,9 +26,16 @@ def _redirect_paths():
 
     config.MEMORY_FILE = str(data_dir / memory_name)
     config.PERMISSIONS_FILE = str(data_dir / permissions_name)
+    template = config.PROJECT_ROOT / permissions_name
+    if not Path(config.PERMISSIONS_FILE).exists() and template.is_file():
+        shutil.copyfile(template, config.PERMISSIONS_FILE)
     config.SPOTIFY_TOKEN_FILE = str(data_dir / spotify_name)
     config.LOG_DIR = logs_dir
     config.SCREENSHOT_DIR = logs_dir / "screenshots"
+    config.RUNTIME_DIR = data_dir / "runtime"
+    config.BACKGROUND_TASK_DIR = config.RUNTIME_DIR / "tasks"
+    config.BACKGROUND_TASK_FILE = config.RUNTIME_DIR / "background_tasks.json"
+    config.RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _silence_stdout():

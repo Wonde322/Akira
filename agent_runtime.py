@@ -94,6 +94,8 @@ class AgentRuntime:
                 "output": "Выполнение отменено.",
             }
         finally:
+            from computer_access import release_desktop
+            release_desktop(context)
             deactivate_execution(token)
             if task_key:
                 with self._lock:

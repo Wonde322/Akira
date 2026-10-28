@@ -20,6 +20,7 @@ def get_active_app():
         ["osascript", "-e", script],
         capture_output=True,
         text=True,
+        timeout=5,
     )
 
     if result.returncode != 0:
@@ -49,6 +50,36 @@ def save_session(app_name, started_at, ended_at):
         print(f"{app_name}: {minutes} мин")
 
 
+class ActivityTracker:
+    """Incremental activity sampler for the desktop heartbeat and CLI."""
+
+    def __init__(self):
+        self.current_app = None
+        self.started_at = None
+
+    def sample(self, app_name=None, now=None):
+        app = get_active_app() if app_name is None else app_name
+        now = now or datetime.now().astimezone().isoformat(timespec="seconds")
+        if app != self.current_app:
+            self.flush(now)
+            self.current_app = app
+            self.started_at = now if app else None
+        elif self.started_at and (datetime.fromisoformat(now) - datetime.fromisoformat(self.started_at)).total_seconds() >= 60:
+            self.flush(now)
+        return {"success": True, "app": app}
+
+    def flush(self, now=None):
+        now = now or datetime.now().astimezone().isoformat(timespec="seconds")
+        if self.current_app and self.started_at:
+            save_session(self.current_app, self.started_at, now)
+            self.started_at = now
+
+    def pause(self):
+        self.flush()
+        self.current_app = None
+        self.started_at = None
+
+
 def run_tracker(check_interval=CHECK_INTERVAL):
     """Track foreground application sessions until interrupted.
 
@@ -57,26 +88,14 @@ def run_tracker(check_interval=CHECK_INTERVAL):
     """
     print("Activity Tracker запущен.")
 
-    current_app = None
-    started_at = None
+    tracker = ActivityTracker()
 
     try:
         while True:
-            app = get_active_app()
-            now = datetime.now().isoformat(timespec="seconds")
-
-            if app != current_app:
-                if current_app is not None and started_at is not None:
-                    save_session(current_app, started_at, now)
-
-                current_app = app
-                started_at = now if app is not None else None
-
+            tracker.sample()
             time.sleep(check_interval)
     except KeyboardInterrupt:
-        if current_app is not None and started_at is not None:
-            now = datetime.now().isoformat(timespec="seconds")
-            save_session(current_app, started_at, now)
+        tracker.flush()
         print("\nActivity Tracker остановлен.")
 
 
