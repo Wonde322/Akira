@@ -202,7 +202,9 @@ class TextMainWindow(QMainWindow):
         timer.setInterval(100)
         timer.timeout.connect(lambda: dialog.reject() if request["answered"].is_set() else None)
         timer.start()
-        dialog.open()
+        # Keep Stop and window close available while permission is pending.
+        dialog.setWindowModality(Qt.WindowModality.NonModal)
+        dialog.show()
 
     def _on_worker_finished(self):
         if self._closing:

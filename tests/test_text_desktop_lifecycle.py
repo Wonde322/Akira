@@ -51,6 +51,7 @@ def test_text_confirmation_is_connected_to_permission_provider(window, qapp, cho
     def answer():
         dialog = window._confirmation_dialog
         assert dialog is not None
+        assert not dialog.isModal()
         dialog.done(choice)
 
     # The provider normally runs in the worker; pump UI events while it waits.
