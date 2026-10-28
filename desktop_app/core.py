@@ -63,10 +63,17 @@ class CoreWidget(QWidget):
         from PySide6.QtCore import QRectF
         painter=QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        image=self.frames[self.bank*64+int(self.phase)]
+        level = min(3.0, max(0.0, (self.energy - .025) / .975 * 3))
+        lower = int(level)
+        blend = level - lower
+        image=self.frames[lower*64+int(self.phase)]
         width=min(self.width(),self.height()*320/210)
         height=width*210/320
-        painter.drawPixmap(QRectF((self.width()-width)/2,(self.height()-height)/2,width,height), image, QRectF(0,0,320,210))
+        destination = QRectF((self.width()-width)/2,(self.height()-height)/2,width,height)
+        painter.drawPixmap(destination, image, QRectF(0,0,320,210))
+        if blend > .001 and lower < 3:
+            painter.setOpacity(blend)
+            painter.drawPixmap(destination, self.frames[(lower+1)*64+int(self.phase)], QRectF(0,0,320,210))
 
 
 class SystemAudioSpectrum(QThread):
