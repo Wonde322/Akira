@@ -51,3 +51,13 @@ QT_QPA_PLATFORM=offscreen python -m pytest -q
 ```
 
 Тесты используют подставные ответы модели и GUI-бэкенды. Они не проверяют действующий API-ключ, доступность модели у провайдера и реальные разрешения macOS. Проверка на целевом Mac: запустить окно, отправить обычный запрос, выполнить простое действие, отменить длинный запрос, отправить следующий запрос и закрыть окно.
+
+### Desktop chats
+
+The text window follows new replies after Qt finishes laying them out and shows
+three animated dots while the current chat is running. Use **+ Новый чат** and
+the header selector to keep separate conversations. Replies stay in the chat
+that submitted the request, even when another chat is selected. Transcripts and
+the selected chat are saved privately in `RUNTIME_DIR/desktop_chats.json`; after
+a restart the recent conversation restores model context on its next request.
+All chats share the existing serialized worker and permissions.

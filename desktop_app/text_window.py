@@ -8,8 +8,9 @@ from __future__ import annotations
 from collections import deque
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QPainter, QColor
 from PySide6.QtWidgets import (
+    QComboBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -27,6 +28,41 @@ from .worker import BrainWorker
 from .confirmation import ConfirmationService
 
 
+class TypingIndicator(QWidget):
+    """A lightweight painted animation; no model calls or extra threads."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(72, 36)
+        self.setAccessibleName("Акира печатает")
+        self.phase = 0
+        self.timer = QTimer(self)
+        self.timer.setInterval(160)
+        self.timer.timeout.connect(self._advance)
+        self.hide()
+
+    def _advance(self):
+        self.phase = (self.phase + 1) % 6
+        self.update()
+
+    def set_active(self, active):
+        self.setVisible(active)
+        if active:
+            self.timer.start()
+        else:
+            self.timer.stop()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#1e1e24"))
+        painter.drawRoundedRect(self.rect(), 14, 14)
+        for index in range(3):
+            raised = self.phase == index * 2
+            painter.setBrush(QColor("#e4e4ec" if raised else "#777780"))
+            painter.drawEllipse(20 + index * 12, 11 if raised else 17, 6, 6)
+
+
 class TextChatView(QScrollArea):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -40,7 +76,36 @@ class TextChatView(QScrollArea):
         self._layout.setContentsMargins(20, 20, 20, 12)
         self._layout.setSpacing(10)
         self._layout.addStretch(1)
+        self.typing = TypingIndicator()
+        self._layout.insertWidget(self._layout.count() - 1, self.typing, 0, Qt.AlignmentFlag.AlignLeft)
         self.setWidget(self._container)
+        self._follow_bottom = True
+        self.verticalScrollBar().rangeChanged.connect(self._range_changed)
+
+    def _range_changed(self, minimum, maximum):
+        if self._follow_bottom:
+            self.verticalScrollBar().setValue(maximum)
+
+    def wheelEvent(self, event):
+        super().wheelEvent(event)
+        bar = self.verticalScrollBar()
+        self._follow_bottom = bar.value() >= bar.maximum() - 24
+
+    def scroll_to_bottom(self):
+        self._follow_bottom = True
+        # Qt computes wrapped-label heights after insertion, on the next layout pass.
+        QTimer.singleShot(0, lambda: self.verticalScrollBar().setValue(self.verticalScrollBar().maximum()))
+
+    def set_typing(self, active):
+        self.typing.set_active(active)
+        if active:
+            self.scroll_to_bottom()
+
+    def clear_messages(self):
+        while self._layout.count() > 2:
+            item = self._layout.takeAt(0)
+            item.widget().hide()
+            item.widget().deleteLater()
 
     def add_message(self, text: str, role: str):
         label = QLabel(str(text))
@@ -66,8 +131,8 @@ class TextChatView(QScrollArea):
         row.setContentsMargins(0, 0, 0, 0)
         wrapper = QWidget()
         wrapper.setLayout(row)
-        self._layout.insertWidget(self._layout.count() - 1, wrapper)
-        self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
+        self._layout.insertWidget(self._layout.count() - 2, wrapper)
+        self.scroll_to_bottom()
 
 
 class TextInput(QPlainTextEdit):
@@ -97,6 +162,9 @@ class TextMainWindow(QMainWindow):
 
     def __init__(self, parent=None, *, services=None, proactive=None):
         super().__init__(parent)
+        from .chat_store import ChatStore
+        self.chat_store = ChatStore()
+        self._busy_chat = None
         self._closing = False
         self._confirmation_dialog = None
         self._confirmation_request = None
@@ -114,7 +182,21 @@ class TextMainWindow(QMainWindow):
         header = QLabel("AKIRA")
         header.setFont(QFont("SF Pro Display", 16, QFont.Weight.DemiBold))
         header.setStyleSheet("color:#e8e8ee; padding:16px 20px;")
-        layout.addWidget(header)
+        header_row = QHBoxLayout()
+        header_row.addWidget(header)
+        self.chat_selector = QComboBox()
+        self.chat_selector.setMinimumWidth(180)
+        self.chat_selector.setMaximumWidth(320)
+        self.chat_selector.setStyleSheet("background:#25252d; color:#e8e8ee; padding:8px; border-radius:8px;")
+        self.chat_selector.currentIndexChanged.connect(self._switch_chat)
+        header_row.addWidget(self.chat_selector, 1)
+        self.new_chat = QPushButton("+ Новый чат")
+        self.new_chat.setStyleSheet("background:#25252d; color:#e8e8ee; padding:8px; border-radius:8px;")
+        self.new_chat.setFixedWidth(120)
+        self.new_chat.clicked.connect(self._create_chat)
+        header_row.addWidget(self.new_chat)
+        header_row.addSpacing(20)
+        layout.addLayout(header_row)
         self.status = QLabel("Готов")
         self.status.setStyleSheet("color:#9a9aa4; padding:0 20px 8px;")
         layout.addWidget(self.status)
@@ -152,10 +234,10 @@ class TextMainWindow(QMainWindow):
         self.confirmation = ConfirmationService(self)
         self.confirmation.request_received.connect(self._on_confirmation)
         set_confirmation_provider(self.confirmation.provider)
-        self.worker = BrainWorker(session_id="desktop")
-        self.worker.answer_ready.connect(self._on_answer)
-        self.worker.error.connect(self._on_error)
-        self.worker.busy.connect(self._on_busy)
+        self.worker = BrainWorker(session_id=self.chat_store.active)
+        self.worker.chat_answer.connect(self._chat_answer)
+        self.worker.chat_error.connect(self._chat_answer)
+        self.worker.chat_busy.connect(self._chat_busy)
         self.worker.activity.connect(self.status.setText)
         self.worker.finished.connect(self._on_worker_finished)
         from .services import DesktopServices
@@ -170,6 +252,8 @@ class TextMainWindow(QMainWindow):
         self._close_timer = QTimer(self)
         self._close_timer.setInterval(100)
         self._close_timer.timeout.connect(self._finish_close)
+        self._refresh_chats()
+        self._render_chat()
         self.worker.start()
         self.input.setFocus()
 
@@ -178,11 +262,55 @@ class TextMainWindow(QMainWindow):
         if not text:
             return
         self.input.clear()
-        self.chat.add_message(text, "user")
+        history = list(self.chat_store.get()["messages"])
+        self._append_message(text, "user")
         if self.worker._stop_word(text):
             self._cancel_current()
             return
-        self.worker.submit(text)
+        self.worker.submit(text, session_id=self.chat_store.active, history=history)
+
+    def _refresh_chats(self):
+        self.chat_selector.blockSignals(True)
+        self.chat_selector.clear()
+        for chat in self.chat_store.chats:
+            self.chat_selector.addItem(chat['title'], chat['id'])
+        self.chat_selector.setCurrentIndex(self.chat_selector.findData(self.chat_store.active))
+        self.chat_selector.blockSignals(False)
+
+    def _create_chat(self):
+        self.chat_store.create()
+        self._refresh_chats()
+        self._render_chat()
+        self.input.setFocus()
+
+    def _switch_chat(self, index):
+        chat_id = self.chat_selector.itemData(index)
+        if chat_id:
+            self.chat_store.active = chat_id
+            self.chat_store.save()
+            self._render_chat()
+
+    def _render_chat(self):
+        self.chat.clear_messages()
+        for message in self.chat_store.get()['messages']:
+            self.chat.add_message(message['text'], message['role'])
+        self.chat.set_typing(self._busy_chat == self.chat_store.active)
+        self.chat.scroll_to_bottom()
+
+    def _append_message(self, text, role, chat_id=None):
+        chat_id = chat_id or self.chat_store.active
+        self.chat_store.append(text, role, chat_id)
+        if chat_id == self.chat_store.active:
+            self.chat.add_message(text, role)
+        self._refresh_chats()
+
+    def _chat_answer(self, chat_id, answer):
+        self._append_message(answer, 'akira', chat_id)
+
+    def _chat_busy(self, chat_id, busy):
+        self._busy_chat = chat_id if busy else None
+        self._on_busy(busy)
+        self.chat.set_typing(busy and chat_id == self.chat_store.active)
 
     def _on_busy(self, busy: bool):
         self.stop.setEnabled(busy and not self._closing)
@@ -191,7 +319,8 @@ class TextMainWindow(QMainWindow):
     def _cancel_current(self):
         request_id = self.worker._active_request_id
         if self.worker.cancel_current():
-            self.chat.add_message("Остановил.", "akira")
+            self._append_message("Остановил.", "akira", self._busy_chat)
+            self.chat.set_typing(False)
         if self._confirmation_dialog is not None and request_id and (self._confirmation_request or {}).get("task_id") == request_id:
             self._confirmation_dialog.reject()
 
@@ -246,7 +375,7 @@ class TextMainWindow(QMainWindow):
     def _on_notification(self, item):
         message = str(item.get("message") or "").strip()
         if message:
-            self.chat.add_message(message, "akira")
+            self._append_message(message, "akira")
 
     def _on_question(self, item):
         from PySide6.QtWidgets import QInputDialog
@@ -273,7 +402,7 @@ class TextMainWindow(QMainWindow):
                 else:
                     response = self.proactive_surface.select(proposal["id"]) if proposal else self.proactive_surface.answer(text)
                 if response.get("success"):
-                    self.chat.add_message(text, "user")
+                    self._append_message(text, "user")
             if self._question_dialog is dialog:
                 self._question_dialog = None
             dialog.deleteLater()
@@ -288,13 +417,13 @@ class TextMainWindow(QMainWindow):
             self.close()
 
     def _on_answer(self, answer: str):
-        self.chat.add_message(answer, "akira")
+        self._append_message(answer, "akira")
         self.input.setEnabled(True)
         self.send.setEnabled(True)
         self.input.setFocus()
 
     def _on_error(self, message: str):
-        self.chat.add_message(message, "akira")
+        self._append_message(message, "akira")
         self.input.setEnabled(True)
         self.send.setEnabled(True)
         self.input.setFocus()

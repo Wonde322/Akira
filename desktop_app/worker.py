@@ -57,6 +57,9 @@ def _response_text(result):
 class BrainWorker(QThread):
     """Own the desktop FIFO and cancel the active runtime request cooperatively."""
 
+    chat_answer = Signal(str, str)
+    chat_error = Signal(str, str)
+    chat_busy = Signal(str, bool)
     answer_ready = Signal(str)
     error = Signal(str)
     activity = Signal(str)
@@ -105,7 +108,7 @@ class BrainWorker(QThread):
             self._prepare_start()
             super().start(priority)
 
-    def submit(self, message):
+    def submit(self, message, session_id=None, history=None):
         if message is None:
             return
         message = str(message).strip()
@@ -118,7 +121,7 @@ class BrainWorker(QThread):
         with self._lock:
             if self._stop_event.is_set():
                 return
-            self._queue.put((message, str(uuid.uuid4())))
+            self._queue.put((message, str(uuid.uuid4()), session_id or self.session_id, history))
 
     def cancel_current(self):
         with self._lock:
@@ -153,32 +156,42 @@ class BrainWorker(QThread):
             if item is None:
                 return
 
-            message, request_id = item
+            message, request_id, session_id, history = item
             with self._lock:
                 if self._stop_event.is_set():
                     continue
                 self._active_request_id = request_id
+            self.chat_busy.emit(session_id, True)
             self.busy.emit(True)
 
             try:
+                if history:
+                    from agent_loop import get_session
+                    session = get_session(session_id)
+                    if not session.history:
+                        session.history = [{'role': 'assistant' if m['role'] == 'akira' else 'user', 'content': m['text']} for m in history]
+                        session.trim()
                 result = self._gateway_instance().submit_text(
                     message,
-                    metadata={"session_id": self.session_id},
+                    metadata={"session_id": session_id},
                     request_id=request_id,
                 )
                 answer = _response_text(result)
                 with self._lock:
                     cancelled = self._stop_event.is_set() or self._active_request_id != request_id
                 if not cancelled and answer:
+                    self.chat_answer.emit(session_id, answer)
                     self.answer_ready.emit(answer)
             except Exception as exc:
                 with self._lock:
                     cancelled = self._stop_event.is_set() or self._active_request_id != request_id
                 if not cancelled:
                     logging.getLogger(__name__).warning("Akira request failed: %s", exc)
+                    self.chat_error.emit(session_id, _friendly_error(exc))
                     self.error.emit(_friendly_error(exc))
             finally:
                 with self._lock:
                     if self._active_request_id == request_id:
                         self._active_request_id = None
+                self.chat_busy.emit(session_id, False)
                 self.busy.emit(False)

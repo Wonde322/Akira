@@ -1,0 +1,102 @@
+import time
+
+from test_text_desktop_lifecycle import window, wait_until
+
+
+def test_chat_store_survives_restart_with_separate_histories(tmp_path):
+    from desktop_app.chat_store import ChatStore
+    path = tmp_path / 'chats.json'
+    store = ChatStore(path)
+    first = store.active
+    store.append('Первый проект', 'user')
+    second = store.create()['id']
+    store.append('Другой проект', 'user')
+    restored = ChatStore(path)
+    assert restored.active == second
+    assert restored.get(first)['messages'] == [{'text': 'Первый проект', 'role': 'user'}]
+    assert restored.get(second)['title'] == 'Другой проект'
+    assert path.stat().st_mode & 0o077 == 0
+
+
+def test_switch_during_reply_routes_answer_to_original_chat(window):
+    first = window.chat_store.active
+    window._chat_busy(first, True)
+    window._create_chat()
+    second = window.chat_store.active
+    assert not window.chat.typing.timer.isActive()
+    window._chat_answer(first, 'Ответ в первом чате')
+    assert not any(m['text'] == 'Ответ в первом чате' for m in window.chat_store.get(second)['messages'])
+    window.chat_selector.setCurrentIndex(window.chat_selector.findData(first))
+    assert window.chat.typing.timer.isActive()
+    assert window.chat_store.get()['messages'][-1]['text'] == 'Ответ в первом чате'
+    window._chat_busy(first, False)
+    assert not window.chat.typing.timer.isActive()
+
+
+def test_scroll_reaches_bottom_after_wrapped_answer_layout(window, qapp):
+    window.show()
+    for index in range(20):
+        window.chat.add_message(('Длинный ответ ' * 25) + str(index), 'akira')
+    wait_until(qapp, lambda: window.chat.verticalScrollBar().maximum() > 0)
+    for _ in range(8):
+        qapp.processEvents()
+    bar = window.chat.verticalScrollBar()
+    assert bar.value() == bar.maximum()
+    window.chat.add_message('Последняя строка\n' * 20, 'akira')
+    for _ in range(8):
+        qapp.processEvents()
+    assert bar.value() == bar.maximum()
+
+
+def test_worker_captures_chat_when_queued(qapp):
+    from desktop_app.worker import BrainWorker
+    worker = BrainWorker()
+    calls = []
+    class Gateway:
+        def submit_text(self, message, **kwargs):
+            calls.append(kwargs['metadata']['session_id'])
+            return message
+    worker._gateway = Gateway()
+    answers = []
+    worker.chat_answer.connect(lambda chat, text: answers.append((chat, text)))
+    worker.submit('Первый', session_id='one')
+    worker.submit('Второй', session_id='two')
+    worker.session_id = 'unrelated'
+    worker.start()
+    try:
+        wait_until(qapp, lambda: len(answers) == 2)
+        assert calls == ['one', 'two']
+        assert answers == [('one', 'Первый'), ('two', 'Второй')]
+    finally:
+        worker.request_stop()
+        assert worker.wait(1000)
+
+
+def test_worker_restores_recent_transcript_without_overwriting_live_session(qapp, monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    from session import Session
+    from desktop_app.worker import BrainWorker
+    session = Session('restored')
+    monkeypatch.setitem(sys.modules, 'agent_loop', SimpleNamespace(get_session=lambda key: session))
+    seen = []
+    class Gateway:
+        def submit_text(self, message, **kwargs):
+            seen.append(list(session.history))
+            session.add({'role': 'user', 'content': message})
+            return 'ok'
+    worker = BrainWorker()
+    worker._gateway = Gateway()
+    answers = []
+    worker.chat_answer.connect(lambda *args: answers.append(args))
+    transcript = [{'role': 'user', 'text': 'Меня зовут Миша'}, {'role': 'akira', 'text': 'Запомнил.'}]
+    worker.submit('Как меня зовут?', session_id='restored', history=transcript)
+    worker.submit('Продолжим', session_id='restored', history=transcript)
+    worker.start()
+    try:
+        wait_until(qapp, lambda: len(answers) == 2)
+        assert seen[0] == [{'role': 'user', 'content': 'Меня зовут Миша'}, {'role': 'assistant', 'content': 'Запомнил.'}]
+        assert seen[1][-1]['content'] == 'Как меня зовут?'
+    finally:
+        worker.request_stop()
+        assert worker.wait(1000)
