@@ -114,15 +114,23 @@ TOOL_REGISTRY = (
     ),
     ToolDefinition(
         "open_youtube",
-        "Открывает Google Chrome и выполняет поиск на YouTube. Используй, когда пользователь просит открыть или найти что-либо на YouTube.",
+        "Находит первое видео по запросу на YouTube и открывает его в Google Chrome.",
         _parameters({"query": {"type": "string", "description": "Что найти на YouTube."}}, ["query"]),
         "youtube", "open_youtube", "auto",
     ),
     ToolDefinition(
         "play_spotify",
-        "Открывает поиск в установленном приложении Spotify. Используй, когда пользователь просит включить трек, исполнителя, альбом или музыку в Spotify.",
-        _parameters({"query": {"type": "string", "description": "Название трека, исполнителя, альбома или музыки."}}, ["query"]),
+        "Включает трек, исполнителя или альбом в Spotify. Для альбома передай запрос «альбом Название».",
+        _parameters({"query": {"type": "string", "description": "Название трека, исполнителя или альбома. Пустая строка — продолжить воспроизведение."}}, ["query"]),
         "spotify_control", "play", "auto",
+    ),
+    ToolDefinition(
+        "spotify_pause", "Ставит музыку в Spotify на паузу.", _parameters({}),
+        "spotify_control", "pause", "auto",
+    ),
+    ToolDefinition(
+        "spotify_next", "Переключает Spotify на следующий трек.", _parameters({}),
+        "spotify_control", "next_track", "auto",
     ),
     ToolDefinition(
         "check_proactive",
@@ -700,6 +708,12 @@ TOOL_REGISTRY = TOOL_REGISTRY + (
         "task_runtime",
         "background_task_result",
         "auto",
+    ),
+    ToolDefinition(
+        "background_task_cancel",
+        "Останавливает указанную фоновую задачу по её ID.",
+        _parameters({"task_id": {"type": "string", "description": "ID фоновой задачи."}}, ["task_id"]),
+        "task_runtime", "background_task_cancel", "auto",
     ),
 )
 

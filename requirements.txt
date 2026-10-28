@@ -7,3 +7,4 @@ soundfile
 webrtcvad-wheels
 pyobjc-framework-Quartz; sys_platform == "darwin"
 pytest
+yt-dlp
