@@ -2,30 +2,34 @@
 import time
 
 from PySide6.QtCore import QTimer, QThread, Signal
-from PySide6.QtGui import QPainter, QImage
+from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import QWidget
 
 
 class CoreWidget(QWidget):
-    """Composite offline-rendered frames; no live ring geometry."""
+    """Play the supplied reference artwork, without synthesizing its shapes."""
     def __init__(self, parent=None):
         super().__init__(parent)
         from pathlib import Path
         import sys
-        from PySide6.QtGui import QPixmap
-        root = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parents[1]))
-        sheet = QPixmap(str(root / 'assets' / 'core_atlas.png'))
-        self.frames = [sheet.copy((i % 8)*360, (i // 8)*210, 360, 210) for i in range(128)]
+        from PySide6.QtGui import QMovie, QPixmap
+        root = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parents[1])) / 'assets'
+        self.idle = QPixmap(str(root / 'core_reference_idle.jpg'))
+        self.movies = [QMovie(str(root / name)) for name in ('core_reference.gif', 'core_reference_active.gif')]
+        for movie in self.movies:
+            movie.setCacheMode(QMovie.CacheMode.CacheAll)
+            movie.frameChanged.connect(self.update)
+            movie.jumpToFrame(0)
+        self.mode = 0
         self.setMinimumHeight(170)
-        self.setMaximumHeight(250)
-        self.setAccessibleName('Ядро Акиры: две волны плазмы')
+        self.setMaximumHeight(280)
+        self.setAccessibleName('Ядро Акиры: исходная анимация колец')
         self.working = False
         self.bands = []
         self.audio_at = 0.0
-        self.started = time.monotonic()
         self.energy = 0.0
         self.timer = QTimer(self)
-        self.timer.setInterval(33)
+        self.timer.setInterval(50)
         self.timer.timeout.connect(self._advance)
 
     def set_working(self, working):
@@ -39,38 +43,36 @@ class CoreWidget(QWidget):
         live = bool(self.bands) and time.monotonic() - self.audio_at < 0.5
         target = max(max(self.bands) if live else 0.0, 0.65 if self.working else 0.025)
         self.energy += (target - self.energy) * (0.25 if target > self.energy else 0.1)
+        # Hysteresis avoids flashing between different source clips on each beat.
+        mode = 2 if self.energy > 0.78 else (1 if self.energy > 0.15 else 0)
+        if self.mode == 2 and self.energy > 0.6: mode = 2
+        if self.mode == 1 and 0.08 < self.energy < 0.85: mode = 1
+        if mode != self.mode:
+            for movie in self.movies: movie.stop()
+            self.mode = mode
+            if mode and self.isVisible(): self.movies[mode-1].start()
         self.update()
 
     def showEvent(self, event):
         self.timer.start()
+        if self.mode: self.movies[self.mode-1].start()
         super().showEvent(event)
 
     def hideEvent(self, event):
         self.timer.stop()
+        for movie in self.movies: movie.stop()
         super().hideEvent(event)
 
     def paintEvent(self, event):
         from PySide6.QtCore import QRectF
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        # Crossfade adjacent temporal frames and intensity banks on a fixed plane.
-        phase = ((time.monotonic() - self.started) * 12) % 32
-        bank = max(0.0, min(3.0, self.energy * 3))
-        first, blend = int(phase), phase % 1
-        low, amount = int(bank), bank % 1
-        size = min(self.width(), self.height() * 360 / 210)
-        rect = QRectF((self.width()-size)/2, (self.height()-size*210/360)/2, size, size*210/360)
-        canvas = QImage(360, 210, QImage.Format.Format_ARGB32_Premultiplied)
-        canvas.fill(0)
-        mixer = QPainter(canvas)
-        mixer.setCompositionMode(QPainter.CompositionMode.CompositionMode_Plus)
-        for level, weight in ((low, 1-amount), (min(3,low+1), amount)):
-            for index, opacity in ((first, 1-blend), ((first+1)%32, blend)):
-                if weight * opacity > 0:
-                    mixer.setOpacity(weight * opacity)
-                    mixer.drawPixmap(0, 0, self.frames[level*32+index])
-        mixer.end()
-        painter.drawImage(rect, canvas)
+        pixmap = self.movies[self.mode-1].currentPixmap() if self.mode else self.idle
+        if pixmap.isNull(): return
+        width = min(self.width(), self.height() * pixmap.width() / pixmap.height())
+        height = width * pixmap.height() / pixmap.width()
+        painter.drawPixmap(QRectF((self.width()-width)/2, (self.height()-height)/2, width, height),
+                           pixmap, QRectF(pixmap.rect()))
 
 
 class SystemAudioSpectrum(QThread):
