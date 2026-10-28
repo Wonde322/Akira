@@ -64,9 +64,9 @@ All chats share the existing serialized worker and permissions.
 
 ### Animated core
 
-The core displays the user-supplied Akira reference still and original GIF clips,
-including their original scene/background. It does not recreate, recolor, blend
-or interpolate the ring artwork. Idle shows the calm still; working and loopback
-audio select the original moderate/strong clips with hysteresis. Playback uses
-original frame timings. No model calls or microphone input are used. Optional
-system-audio FFT requires an existing routed BlackHole/Loopback/Stereo Mix input.
+The desktop continuously plays prepared transparent plasma frames, including in
+idle mode. The asset contains four amplitude banks with 64 motion phases each;
+o live ring geometry or laboratory footage is drawn. The animation timer stops
+when hidden. Request state and optional loopback-audio FFT choose intensity and
+playback speed; the microphone is never opened. Source frames use offline motion
+interpolation; the desktop needs no image-processing libraries.

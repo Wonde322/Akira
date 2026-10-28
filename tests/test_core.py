@@ -14,8 +14,8 @@ def test_core_idle_work_and_audio_have_separate_levels(qapp):
     core.set_spectrum([0.9] * 32)
     for _ in range(40): core._advance()
     assert core.energy > 0.8
-    assert not core.idle.isNull()
-    assert all(movie.isValid() for movie in core.movies)
+    assert len(core.frames)==256
+    assert all(not frame.isNull() for frame in core.frames)
     core.resize(600, 240)
     core.show(); qapp.processEvents()
     assert core.timer.isActive()
@@ -57,3 +57,17 @@ def test_loopback_audio_emits_real_fft_bands(monkeypatch, qapp):
     assert opened == [1]
     assert len(spectra[0]) == 32
     assert max(spectra[0]) > 0.2
+
+
+def test_idle_animation_keeps_advancing(qapp, monkeypatch):
+    from desktop_app.core import CoreWidget
+    core=CoreWidget()
+    clock=[core.last_tick]
+    monkeypatch.setattr('desktop_app.core.time.monotonic', lambda: clock[0])
+    start=core.phase
+    for _ in range(10):
+        clock[0]+=.05
+        core._advance()
+    assert core.phase>start
+    assert core.bank==0
+    assert core.frames[0].toImage()!=core.frames[16].toImage()
