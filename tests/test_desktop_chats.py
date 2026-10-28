@@ -177,3 +177,10 @@ def test_file_picker_adds_paths_to_request_and_persisted_context(window, monkeyp
     assert str(path) in message
     assert str(path) in window.chat_store.get()['messages'][-1]['context']
     assert not window._attachments
+
+
+def test_chat_titles_display_with_initial_capital(window):
+    window.chat_store.get()['title'] = 'привет NASA'
+    window._refresh_chats()
+    assert window.chat_selector.currentText() == 'Привет NASA'
+    assert window.attach.text() == ''

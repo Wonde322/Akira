@@ -124,7 +124,7 @@ def select_tool_schemas(query, schemas, limit=12, task_active=False, pinned_tool
 
     mandatory = _always_include(task_active)
     if is_web_query(query):
-        mandatory.update({"browser_navigate", "browser_execute"})
+        mandatory.add("web_search")
     if pinned_tools:
         mandatory.update(str(name) for name in pinned_tools if name)
 

@@ -79,5 +79,6 @@
   "reset_proactive_mode": "auto",
   "background_task_cancel": "auto",
   "spotify_pause": "auto",
-  "spotify_next": "auto"
+  "spotify_next": "auto",
+  "web_search": "auto"
 }

@@ -47,6 +47,13 @@ def _parameters(properties, required=None):
 
 TOOL_REGISTRY = (
     ToolDefinition(
+        "web_search",
+        "Поиск в интернете: погугли, найди сведения. Возвращает тексты результатов и ссылки для ответа прямо в чате; не открывает браузер.",
+        _parameters({"query": {"type": "string", "description": "Тема поиска с учётом предыдущих сообщений."},
+                     "limit": {"type": "integer", "description": "Число результатов, 1–5."}}, ["query"]),
+        "capabilities.web", "web_search", "auto",
+    ),
+    ToolDefinition(
         "discover_capability",
         "Ищет capability во всём registry, включая инструменты, которые "
         "текущий relevance-router не показал. Используй, если для задачи "

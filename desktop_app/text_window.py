@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, QElapsedTimer, QRectF, QPointF, QPoint, QSize
-from PySide6.QtGui import QFont, QPainter, QColor
+from PySide6.QtGui import QFont, QPainter, QColor, QPen
 from PySide6.QtWidgets import (
     QComboBox,
     QListWidget,
@@ -32,6 +32,18 @@ from PySide6.QtWidgets import (
 
 from .worker import BrainWorker
 from .confirmation import ConfirmationService
+
+
+class AttachButton(QPushButton):
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QColor("#e8e8ee"), 2.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        center = self.rect().center()
+        x, y = center.x() + 0.5, center.y() + 0.5
+        painter.drawLine(QPointF(x - 6, y), QPointF(x + 6, y))
+        painter.drawLine(QPointF(x, y - 6), QPointF(x, y + 6))
 
 
 class ChatSelector(QComboBox):
@@ -327,7 +339,7 @@ class TextMainWindow(QMainWindow):
         bottom_layout.setContentsMargins(20, 10, 20, 20)
         bottom_layout.setSpacing(10)
         self.input = TextInput(self)
-        self.attach = QPushButton("+")
+        self.attach = AttachButton("")
         self.attach.setFixedSize(40, 40)
         self.attach.setToolTip("Добавить файлы")
         self.attach.setAccessibleName("Добавить файлы")
@@ -445,7 +457,9 @@ class TextMainWindow(QMainWindow):
         self.chat_selector.blockSignals(True)
         self.chat_selector.clear()
         for chat in self.chat_store.chats:
-            self.chat_selector.addItem(chat['title'], chat['id'])
+            title = str(chat['title'])
+            title = title[:1].upper() + title[1:]
+            self.chat_selector.addItem(title, chat['id'])
         self.chat_selector.setCurrentIndex(self.chat_selector.findData(self.chat_store.active))
         self.chat_selector.blockSignals(False)
 

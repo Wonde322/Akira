@@ -8,3 +8,4 @@ webrtcvad-wheels
 pyobjc-framework-Quartz; sys_platform == "darwin"
 pytest
 yt-dlp
+ddgs>=9,<10
