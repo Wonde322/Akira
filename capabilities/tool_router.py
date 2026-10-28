@@ -1,8 +1,7 @@
 """Lightweight relevance router for Akira tools.
 
-Routing is based on the language present in tool names/descriptions rather than
-an application-specific alias table. Deterministic desktop commands are handled
-by the gateway fast path before this router is needed.
+Routing uses tool names/descriptions and the caller's conversation context.
+Ambiguity keeps the small discovery surface rather than exposing every tool.
 """
 from __future__ import annotations
 
@@ -93,7 +92,7 @@ def _score(query, schema):
 def _always_include(task_active):
     base = {"finish_task", "discover_capability", "verify_goal"}
     if task_active:
-        base.update({"plan_task", "update_task_plan", "complete_plan_step", "fail_plan_step"})
+        base.update({"observe", "plan_task", "update_task_plan", "complete_plan_step", "fail_plan_step"})
     return base
 
 
@@ -127,9 +126,6 @@ def select_tool_schemas(query, schemas, limit=12, task_active=False, pinned_tool
         selected_names.add(name)
         remaining -= 1
 
-    useful = [score for score, _, _ in scored if score > 0]
-    if not useful or max(useful) < 1.0:
-        return list(schemas)
     return selected
 
 

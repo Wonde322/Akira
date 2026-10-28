@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import queue
+import logging
 import threading
 import uuid
 
@@ -23,6 +24,17 @@ def _simple_greeting(message):
 def _friendly_error(error):
     text = str(error or "").strip()
     lowered = text.casefold()
+    status = getattr(error, "status_code", None)
+    if status == 429 or "rate_limit_exceeded" in lowered or "rate limit reached" in lowered:
+        from model_requests import retry_seconds
+        delay = retry_seconds(error)
+        if delay is not None:
+            return f"Достигнут лимит модели. Повтори запрос через {max(1, int(delay) + 1)} с."
+        return "Достигнут лимит модели. Подожди немного и повтори запрос."
+    if "tool_use_failed" in lowered:
+        return "Модель не смогла корректно выбрать инструмент. Повтори запрос."
+    if status == 400:
+        return "Модель отклонила запрос. Подробности ошибки — в терминале."
     if "invalid api key" in lowered or "api key" in lowered or "api_key" in lowered or "groq_api_key" in lowered:
         return "Не удалось обратиться к модели: проверь GROQ_API_KEY."
     if "denied" in lowered or "запрещ" in lowered:
@@ -163,6 +175,7 @@ class BrainWorker(QThread):
                 with self._lock:
                     cancelled = self._stop_event.is_set() or self._active_request_id != request_id
                 if not cancelled:
+                    logging.getLogger(__name__).warning("Akira request failed: %s", exc)
                     self.error.emit(_friendly_error(exc))
             finally:
                 with self._lock:
