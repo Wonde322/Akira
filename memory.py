@@ -472,25 +472,30 @@ def add_activity_session(
     started_at: str,
     ended_at: str,
     duration_seconds: int,
+    context=None,
+    visit_id=None,
 ):
     def update(memory):
-        memory["activity"].append({
-            "app": app_name,
-            "started": started_at,
-            "ended": ended_at,
-            "duration_seconds": duration_seconds,
-        })
+        item = {"app": app_name, "started": started_at, "ended": ended_at,
+                "duration_seconds": duration_seconds}
+        if context is not None:
+            item["context"] = str(context)[:500]
+        if visit_id is not None:
+            item["visit_id"] = str(visit_id)
+        memory["activity"].append(item)
 
     _update_memory(update)
 
 
 def get_activity_for_period(days: int = 1):
-    cutoff = datetime.now() - timedelta(days=days)
+    cutoff = datetime.now().astimezone() - timedelta(days=days)
     activity = []
 
     for session in load_memory()["activity"]:
         try:
             started = datetime.fromisoformat(session["started"])
+            if started.tzinfo is None:
+                started = started.astimezone()
         except (KeyError, TypeError, ValueError):
             continue
 

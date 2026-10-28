@@ -1,6 +1,7 @@
 import subprocess
 import time
 from datetime import datetime
+from uuid import uuid4
 
 from memory import add_activity_session
 
@@ -29,7 +30,7 @@ def get_active_app():
     return result.stdout.strip() or None
 
 
-def save_session(app_name, started_at, ended_at):
+def save_session(app_name, started_at, ended_at, context=None, visit_id=None):
     started = datetime.fromisoformat(started_at)
     ended = datetime.fromisoformat(ended_at)
     duration = (ended - started).total_seconds()
@@ -43,6 +44,7 @@ def save_session(app_name, started_at, ended_at):
         started_at,
         ended_at,
         round(duration),
+        **({"context": context, "visit_id": visit_id} if visit_id else {}),
     )
 
     minutes = int(duration // 60)
@@ -56,13 +58,17 @@ class ActivityTracker:
     def __init__(self):
         self.current_app = None
         self.started_at = None
+        self.context = None
+        self.visit_id = None
 
-    def sample(self, app_name=None, now=None):
+    def sample(self, app_name=None, now=None, context=None):
         app = get_active_app() if app_name is None else app_name
         now = now or datetime.now().astimezone().isoformat(timespec="seconds")
-        if app != self.current_app:
+        if app != self.current_app or context != self.context:
             self.flush(now)
             self.current_app = app
+            self.context = context
+            self.visit_id = uuid4().hex
             self.started_at = now if app else None
         elif self.started_at and (datetime.fromisoformat(now) - datetime.fromisoformat(self.started_at)).total_seconds() >= 60:
             self.flush(now)
@@ -71,7 +77,7 @@ class ActivityTracker:
     def flush(self, now=None):
         now = now or datetime.now().astimezone().isoformat(timespec="seconds")
         if self.current_app and self.started_at:
-            save_session(self.current_app, self.started_at, now)
+            save_session(self.current_app, self.started_at, now, context=self.context, visit_id=self.visit_id)
             self.started_at = now
 
     def pause(self):

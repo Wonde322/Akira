@@ -39,9 +39,9 @@ def test_runtime_notifies_for_dwell_pattern():
         "type": "desktop.context.dwell",
         "payload": {"message": "Ты уже около 15 мин находишься в Figma."},
     })
-    assert decision.action == ProactiveAction.NOTIFY
-    assert decision.reason == "context_dwell"
-    assert decision.priority == "low"
+    assert decision.action == ProactiveAction.RECORD
+    assert decision.reason == "activity_recorded_silently"
+    assert decision.priority == "normal"
 
 
 def test_runtime_notifies_for_repeated_context_pattern():
@@ -51,6 +51,6 @@ def test_runtime_notifies_for_repeated_context_pattern():
         "type": "desktop.context.repeated",
         "payload": {"message": "Ты уже 3 раз возвращался к Figma."},
     })
-    assert decision.action == ProactiveAction.NOTIFY
-    assert decision.reason == "context_repeated"
+    assert decision.action == ProactiveAction.RECORD
+    assert decision.reason == "activity_recorded_silently"
     assert decision.priority == "normal"

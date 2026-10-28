@@ -51,6 +51,10 @@ class ProactiveDelivery:
         delivered=[]; items=list(reversed(self._inbox.list(limit=limit, unread_only=True)))
         for item in items:
             item_id=item.get("id"); action=item.get("action")
+            # Do not replay old ambient commentary left by previous versions.
+            if item.get("event_type") in {"desktop.context.dwell", "desktop.context.repeated"} and item.get("reason") in {"context_dwell", "context_repeated", "repeated_task_context_low_confidence", "task_context_dwell"}:
+                self._inbox.acknowledge(item_id)
+                continue
             if action=="ask_user":
                 with self._lock:
                     if item_id in self._pending_questions: continue

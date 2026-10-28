@@ -144,15 +144,28 @@ class ProactiveRuntime:
         priority = rule["priority"] if rule["priority"] in {"low", "normal", "high"} else "normal"
         return ProactiveDecision(action, "context_rule:" + rule["id"], notification=match["message"], source="context_trigger", priority=priority)
     def _pattern_decision(self, event_type, payload):
+        if event_type not in {"desktop.context.dwell", "desktop.context.repeated"}:
+            return None
         autonomous = self._orchestrator.decide(event_type, payload)
         if autonomous.get("spawn"):
             return ProactiveDecision(ProactiveAction.SPAWN_TASK, autonomous["reason"], goal=autonomous["goal"], source="autonomous_orchestration", priority="low", source_task_id=autonomous.get("task_id"))
+        # Ambient revisits/dwell are evidence, not a reason to interrupt.
+        goal = payload.get("active_goal") or {}
+        try:
+            urgent = float(goal.get("urgency") or 0) >= 0.7 and float(goal.get("confidence") or 0) >= 0.7
+        except (TypeError, ValueError, AttributeError):
+            urgent = False
+        if not (isinstance(goal, dict) and goal.get("deadline") and goal.get("title") and urgent):
+            return ProactiveDecision(ProactiveAction.RECORD, "activity_recorded_silently", source="context_pattern")
         recommendation = self._reasoning_policy.decide(event_type, payload)
         if recommendation is not None:
             try: action = ProactiveAction(recommendation.action)
             except ValueError: action = ProactiveAction.RECORD
-            proposals = self._action_proposer.propose(event_type, payload, recommendation) if action == ProactiveAction.ASK_USER else []
-            return ProactiveDecision(action, recommendation.reason, goal=recommendation.goal, notification=recommendation.notification, source="context_reasoning", priority=recommendation.priority, proposals=proposals)
+            if action != ProactiveAction.ASK_USER:
+                return ProactiveDecision(ProactiveAction.RECORD, "activity_recorded_silently", source="context_pattern")
+            proposals = self._action_proposer.propose(event_type, payload, recommendation)
+            notification = f"У задачи «{goal['title']}» срок {goal['deadline']}. " + str(recommendation.notification or "")
+            return ProactiveDecision(action, recommendation.reason, goal=recommendation.goal, notification=notification, source="context_reasoning", priority=recommendation.priority, proposals=proposals)
         message = str(payload.get("message") or "").strip()
         if not message: return None
         if event_type == "desktop.context.dwell": return ProactiveDecision(ProactiveAction.NOTIFY, "context_dwell", notification=message, source="context_pattern", priority="low")

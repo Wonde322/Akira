@@ -56,6 +56,12 @@ class DesktopServices:
         if self._awareness is not None and not getattr(self._awareness, "enabled", True):
             self._tracker.pause()
             return
+        if self._awareness is not None and hasattr(self._awareness, "state"):
+            from context_triggers import ui_context
+            state = self._awareness.state().get("last_state") or {}
+            context = ui_context(state.get("ui"))
+            if context["app"]:
+                return self._tracker.sample(app_name=context["app"], context=context["title"])
         return self._tracker.sample()
 
     def request_stop(self):

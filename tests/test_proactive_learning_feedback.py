@@ -77,5 +77,5 @@ def test_runtime_uses_feedback_adjusted_policy():
     policy = ProactiveReasoningPolicy(feedback_store=FakeFeedback(True))
     runtime = ProactiveRuntime(dedupe_seconds=0, reasoning_policy=policy)
     decision = runtime.decide({"id": "feedback-runtime", "type": "desktop.context.repeated", "payload": {"count": 3, "active_task": task()}})
-    assert decision.action == ProactiveAction.NOTIFY
-    assert decision.reason.endswith("feedback_suppressed")
+    assert decision.action == ProactiveAction.RECORD
+    assert decision.reason == "activity_recorded_silently"

@@ -10,8 +10,8 @@ import math
 import json
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, QElapsedTimer, QRectF, QPointF, QPoint, QSize
-from PySide6.QtGui import QFont, QPainter, QColor, QPen
+from PySide6.QtCore import Qt, QTimer, QElapsedTimer, QRectF, QPointF, QPoint, QSize, QUrl
+from PySide6.QtGui import QFont, QPainter, QColor, QPen, QDesktopServices
 from PySide6.QtWidgets import (
     QComboBox,
     QListWidget,
@@ -19,6 +19,9 @@ from PySide6.QtWidgets import (
     QFrame,
     QFileDialog,
     QHBoxLayout,
+    QGridLayout,
+    QStyle,
+    QToolButton,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -201,7 +204,9 @@ class TextChatView(QScrollArea):
             item.widget().deleteLater()
 
     def add_message(self, text: str, role: str):
-        label = QLabel(str(text))
+        from .source_links import extract_sources
+        body, sources = extract_sources(text) if role != "user" else (str(text), [])
+        label = QLabel(body)
         label.setTextFormat(Qt.TextFormat.PlainText)
         label.setWordWrap(True)
         label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -223,7 +228,27 @@ class TextChatView(QScrollArea):
             row.addStretch(1)
         row.setContentsMargins(0, 0, 0, 0)
         wrapper = QWidget()
-        wrapper.setLayout(row)
+        column = QVBoxLayout(wrapper)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(6)
+        column.addLayout(row)
+        if sources:
+            links = QGridLayout()
+            links.setSpacing(6)
+            links.setColumnStretch(3, 1)
+            for index, (title, url) in enumerate(sources):
+                button = QToolButton()
+                button.setText(title[:35])
+                button.setToolTip(url)
+                button.setAccessibleName("Источник: " + title)
+                button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DriveNetIcon))
+                button.setIconSize(QSize(14, 14))
+                button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+                button.setCursor(Qt.CursorShape.PointingHandCursor)
+                button.setStyleSheet("QToolButton { color:#c8c8d5; background:#202028; border:1px solid #363640; border-radius:8px; padding:6px 9px; } QToolButton:hover { color:#fff; border-color:#945060; }")
+                button.clicked.connect(lambda checked=False, target=url: QDesktopServices.openUrl(QUrl(target)))
+                links.addWidget(button, index // 3, index % 3, Qt.AlignmentFlag.AlignLeft)
+            column.addLayout(links)
         self._layout.insertWidget(self._layout.count() - 2, wrapper)
         self.scroll_to_bottom()
 

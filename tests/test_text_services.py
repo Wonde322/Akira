@@ -54,7 +54,7 @@ def test_service_shutdown_cancels_background_work_and_stops_polling():
 def test_activity_sampler_records_switches_and_long_sessions(monkeypatch):
     import activity_tracker
     calls = []
-    monkeypatch.setattr(activity_tracker, 'save_session', lambda *args: calls.append(args))
+    monkeypatch.setattr(activity_tracker, 'save_session', lambda *args, **kwargs: calls.append(args))
     tracker = activity_tracker.ActivityTracker()
     tracker.sample('Figma', '2026-10-28T10:00:00+04:00')
     tracker.sample('Figma', '2026-10-28T10:01:00+04:00')

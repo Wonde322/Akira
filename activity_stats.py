@@ -22,6 +22,7 @@ def get_activity_stats(days=1):
     activity = get_activity_for_period(days)
 
     totals = {}
+    visits = {}
 
     for session in activity:
         try:
@@ -30,6 +31,8 @@ def get_activity_stats(days=1):
             if duration < 0:
                 continue
             totals[app] = totals.get(app, 0) + duration
+            if session.get("visit_id"):
+                visits.setdefault(app, set()).add(session["visit_id"])
         except (KeyError, TypeError, ValueError):
             continue
 
@@ -46,7 +49,8 @@ def get_activity_stats(days=1):
     result = title + "\n\n"
 
     for app, seconds in sorted_apps:
-        result += f"{app:<25} {format_duration(seconds)}\n"
+        frequency = f" · сеансов: {len(visits[app])}" if app in visits else ""
+        result += f"{app:<25} {format_duration(seconds)}{frequency}\n"
 
     return result.strip()
 

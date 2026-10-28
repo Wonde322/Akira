@@ -38,9 +38,9 @@ def test_long_high_confidence_dwell_asks_user():
     assert "помогу" in result.notification
 
 
-def test_runtime_uses_reasoning_policy_for_linked_pattern():
+def test_runtime_records_linked_pattern_without_actionable_deadline():
     runtime = ProactiveRuntime(dedupe_seconds=0)
     decision = runtime.decide(event("desktop.context.repeated", {"count": 3, "active_task": task(confidence=0.9)}))
-    assert decision.action == ProactiveAction.ASK_USER
-    assert decision.source == "context_reasoning"
-    assert decision.reason == "repeated_task_context"
+    assert decision.action == ProactiveAction.RECORD
+    assert decision.source == "context_pattern"
+    assert decision.reason == "activity_recorded_silently"
