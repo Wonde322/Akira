@@ -1,8 +1,8 @@
 """Two perspective energy rings, painted locally without model/voice calls."""
 import time
 
-from PySide6.QtCore import QTimer, QThread, Signal
-from PySide6.QtGui import QPainter
+from PySide6.QtCore import Qt, QTimer, QThread, Signal
+from PySide6.QtGui import QPainter, QPixmap
 from PySide6.QtWidgets import QWidget
 
 
@@ -12,10 +12,9 @@ class CoreWidget(QWidget):
         super().__init__(parent)
         from pathlib import Path
         import sys
-        from PySide6.QtGui import QPixmap
         root = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parents[1])) / 'assets'
         sheet = QPixmap(str(root / 'core_motion.png'))
-        self.frames = [sheet.copy((i%8)*320, (i//8)*210, 320, 210) for i in range(256)]
+        self.frames = [sheet.copy((i%8)*320, (i//8)*210, 320, 210) for i in range(512)]
         self.setMinimumHeight(170)
         self.setMaximumHeight(270)
         self.setAccessibleName('Ядро Акиры: анимированная плазма')
@@ -27,7 +26,7 @@ class CoreWidget(QWidget):
         self.bank = 0
         self.last_tick = time.monotonic()
         self.timer = QTimer(self)
-        self.timer.setInterval(33)
+        self.timer.setInterval(16)
         self.timer.timeout.connect(self._advance)
 
     def set_working(self, working):
@@ -42,7 +41,7 @@ class CoreWidget(QWidget):
         live = bool(self.bands) and now-self.audio_at < .5
         target = max(max(self.bands) if live else 0, .65 if self.working else .025)
         self.energy += (target-self.energy) * (.2 if target>self.energy else .08)
-        self.phase = (self.phase + min(.1, now-self.last_tick)*(10+18*self.energy)) % 64
+        self.phase = (self.phase + min(.1, now-self.last_tick)*(30+54*self.energy)) % 128
         self.last_tick = now
         # Hysteresis avoids rapidly switching amplitude banks on quiet transients.
         bounds = (.15,.45,.8)
@@ -66,14 +65,26 @@ class CoreWidget(QWidget):
         level = min(3.0, max(0.0, (self.energy - .025) / .975 * 3))
         lower = int(level)
         blend = level - lower
-        image=self.frames[lower*64+int(self.phase)]
+        phase = int(self.phase)
+        fraction = self.phase - phase
+        # Premultiplied additive blending preserves opacity at moving edges.
+        # Both temporal neighbours wrap within the same amplitude bank.
+        frame = QPixmap(320, 210)
+        frame.fill(Qt.GlobalColor.transparent)
+        mixer = QPainter(frame)
+        mixer.setCompositionMode(QPainter.CompositionMode.CompositionMode_Plus)
+        for bank, bank_weight in ((lower, 1-blend), (min(3, lower+1), blend)):
+            for offset, phase_weight in ((0, 1-fraction), (1, fraction)):
+                weight = bank_weight * phase_weight
+                if weight > .0001:
+                    mixer.setOpacity(weight)
+                    mixer.drawPixmap(0, 0, self.frames[bank*128+(phase+offset)%128])
+        mixer.end()
         width=min(self.width(),self.height()*320/210)
         height=width*210/320
         destination = QRectF((self.width()-width)/2,(self.height()-height)/2,width,height)
-        painter.drawPixmap(destination, image, QRectF(0,0,320,210))
-        if blend > .001 and lower < 3:
-            painter.setOpacity(blend)
-            painter.drawPixmap(destination, self.frames[(lower+1)*64+int(self.phase)], QRectF(0,0,320,210))
+        painter.drawPixmap(destination, frame, QRectF(0,0,320,210))
+
 
 
 class SystemAudioSpectrum(QThread):

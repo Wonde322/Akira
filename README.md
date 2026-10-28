@@ -65,10 +65,11 @@ All chats share the existing serialized worker and permissions.
 ### Animated core
 
 The desktop continuously plays prepared transparent plasma frames, including in
-idle mode. The asset contains four amplitude banks with 64 motion phases each;
-o live ring geometry or laboratory footage is drawn. The animation timer stops
+idle mode. The asset contains four amplitude banks with 128 motion phases each;
+no live ring geometry or laboratory footage is drawn. The animation timer stops
 when hidden. Request state and optional loopback-audio FFT choose intensity and
 playback speed; the microphone is never opened. Source frames are isolated from the supplied animation and cleaned with image
-editing, then interpolated offline. Amplitude banks blend during state changes;
+editing, then interpolated offline. Amplitude banks and neighbouring phases blend at a 16 ms refresh interval;
+playback runs 1.5 times faster than the previous 64-phase version;
 this is an amplitude-driven animation, not a frequency-accurate spectrogram.
 The desktop needs no image-processing libraries.

@@ -14,7 +14,7 @@ def test_core_idle_work_and_audio_have_separate_levels(qapp):
     core.set_spectrum([0.9] * 32)
     for _ in range(40): core._advance()
     assert core.energy > 0.8
-    assert len(core.frames)==256
+    assert len(core.frames)==512
     assert all(not frame.isNull() for frame in core.frames)
     core.resize(600, 240)
     core.show(); qapp.processEvents()
@@ -71,3 +71,25 @@ def test_idle_animation_keeps_advancing(qapp, monkeypatch):
     assert core.phase>start
     assert core.bank==0
     assert core.frames[0].toImage()!=core.frames[16].toImage()
+
+
+def test_core_wrap_is_continuous_and_faster(qapp, monkeypatch):
+    from desktop_app.core import CoreWidget
+    core = CoreWidget()
+    core.resize(320, 210)
+    core.energy = .025
+    core.phase = 127.999
+    before = core.grab().toImage()
+    core.phase = .001
+    after = core.grab().toImage()
+    # Rendering across the wrap must approach the same frame from both sides.
+    import numpy as np
+    a = np.frombuffer(before.bits(), dtype=np.uint8).astype(float)
+    b = np.frombuffer(after.bits(), dtype=np.uint8).astype(float)
+    assert np.abs(a-b).mean() < 1
+    core.phase = 127
+    now = core.last_tick + .05
+    monkeypatch.setattr('desktop_app.core.time.monotonic', lambda: now)
+    core._advance()
+    assert 0 < core.phase < 2
+    assert core.timer.interval() == 16
