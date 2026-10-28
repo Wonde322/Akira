@@ -12,6 +12,7 @@ from PySide6.QtCore import Qt, QTimer, QElapsedTimer, QRectF, QPointF
 from PySide6.QtGui import QFont, QPainter, QColor
 from PySide6.QtWidgets import (
     QComboBox,
+    QListView,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -215,11 +216,15 @@ class TextMainWindow(QMainWindow):
         self.chat_selector = ChatSelector()
         self.chat_selector.setMinimumWidth(180)
         self.chat_selector.setMaximumWidth(320)
+        # macOS native combo menus ignore item padding and row-height styles.
+        self.chat_selector.setView(QListView())
+        self.chat_selector.setMaxVisibleItems(10)
+        self.chat_selector.view().setMinimumWidth(360)
         self.chat_selector.setFixedHeight(40)
         self.chat_selector.setCursor(Qt.CursorShape.PointingHandCursor)
         self.chat_selector.setAccessibleName("История чатов")
         self.chat_selector.setStyleSheet(
-            "QComboBox { background:#1e1e24; color:#e8e8ee; border:1px solid #34343e; "
+            "QComboBox { combobox-popup:0; background:#1e1e24; color:#e8e8ee; border:1px solid #34343e; "
             "border-radius:10px; padding:0 16px; font-size:13px; }"
             "QComboBox:hover { background:#282830; border-color:#555560; }"
             "QComboBox:focus { border-color:#a93b4c; }"
@@ -227,7 +232,7 @@ class TextMainWindow(QMainWindow):
             "QComboBox::down-arrow { image:none;"
             "QComboBox QAbstractItemView { background:#1e1e24; color:#e8e8ee; "
             "selection-background-color:#702432; border:1px solid #3a3a44; outline:0; padding:6px; }"
-            "QComboBox QAbstractItemView::item { min-height:36px; padding:0 10px; }"
+            "QComboBox QAbstractItemView::item { min-height:42px; padding:4px 14px; border-radius:6px; }"
         )
         self.chat_selector.currentIndexChanged.connect(self._switch_chat)
         header_row.addWidget(self.chat_selector, 1)
