@@ -32,11 +32,11 @@ def _friendly_error(error):
 
 def _response_text(result):
     if isinstance(result, dict):
+        if result.get("error") == "cancelled":
+            return ""
         for key in ("response", "output", "answer"):
             if result.get(key):
                 return str(result[key])
-        if result.get("error") == "cancelled":
-            return ""
         if result.get("error"):
             return _friendly_error(result["error"])
     return str(result or "Не получил ответ.")

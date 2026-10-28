@@ -2,6 +2,8 @@ from collections import OrderedDict
 
 import json
 
+from execution_context import ExecutionCancelled, raise_if_execution_cancelled
+
 from audit import record_tool_execution
 from capabilities.observation import (
     build_observation,
@@ -256,6 +258,7 @@ def _execute(function_name, arguments):
     # Resolve concrete tool first.
     # --------------------------------------------------------
 
+    raise_if_execution_cancelled()
     function = get_tool_implementation(
         function_name
     )
@@ -348,12 +351,15 @@ def _execute(function_name, arguments):
     # Execute.
     # --------------------------------------------------------
 
+    raise_if_execution_cancelled()
     try:
 
         output = function(
             **arguments
         )
 
+    except ExecutionCancelled:
+        raise
     except Exception as error:
 
         return (
@@ -617,7 +623,9 @@ def _inject_observation(session, messages, turn_messages, source=None):
     """
     from capabilities.observe import observe as observe_capability
 
+    raise_if_execution_cancelled()
     result = observe_capability(interpret=True)
+    raise_if_execution_cancelled()
     record_tool_execution(
         "observe",
         {},
@@ -792,12 +800,22 @@ def _tools_for_reasoning(session, query, task_active):
 TOOLS = get_tool_schemas()
 
 def ask(message, session_id=None):
+    """Run a turn and discard unfinished computer state on cancellation."""
+    try:
+        return _ask(message, session_id=session_id)
+    except ExecutionCancelled:
+        get_session(session_id).end_task()
+        raise
+
+
+def _ask(message, session_id=None):
     """Обрабатывает запрос пользователя в рамках указанной сессии.
 
     Поддерживает computer-use loop: observe → reasoning → действие →
     observe → … → finish_task, с лимитами шагов, no-progress и повторных
     действий, и безопасной остановкой при denied/blocked.
     """
+    raise_if_execution_cancelled()
     session = get_session(session_id)
     source = session.session_id
 
@@ -837,6 +855,7 @@ def ask(message, session_id=None):
     no_tool_streak = 0
 
     for _ in range(MAX_TOOL_ITERATIONS):
+        raise_if_execution_cancelled()
         active_tools = _tools_for_reasoning(
             session=session,
             query=message,
@@ -858,6 +877,7 @@ def ask(message, session_id=None):
         ):
             messages[0]["content"] = COMPUTER_USE_SYSTEM_PROMPT
 
+        raise_if_execution_cancelled()
         response = client.chat.completions.create(
             model=MODEL,
             messages=messages,
@@ -865,6 +885,7 @@ def ask(message, session_id=None):
             tool_choice="auto",
         )
 
+        raise_if_execution_cancelled()
         assistant_message = response.choices[0].message
 
         if not assistant_message.tool_calls:
@@ -913,6 +934,7 @@ def ask(message, session_id=None):
         stop_reason = None
 
         for tool_call in assistant_message.tool_calls:
+            raise_if_execution_cancelled()
             function_name = tool_call.function.name
 
             # Start computer-use state only when the model actually

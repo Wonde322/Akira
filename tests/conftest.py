@@ -5,12 +5,14 @@ import types
 import pytest
 
 
+# Keep execution_context loaded: runtimes imported during test collection hold
+# its ContextVar and exception class for the lifetime of the process.
 PROJECT_MODULES = {
     "activity_stats", "agent_execution", "agent_loop", "analysis", "audit", "brain",
     "capabilities.apps", "capabilities.backend", "capabilities.filesystem", "capabilities.gui",
     "capabilities.key", "capabilities.observe", "capabilities.observation", "capabilities.protocol",
     "capabilities.recovery", "capabilities.shell", "capabilities.task", "capabilities.vision",
-    "capabilities.wait", "config", "execution_context", "execution_policy", "format", "memory",
+    "capabilities.wait", "config", "execution_policy", "format", "memory",
     "permissions", "request_context", "session", "spotify_control", "tool_registry", "tools", "youtube",
 }
 
