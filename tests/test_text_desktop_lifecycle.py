@@ -21,6 +21,7 @@ def window(qapp, monkeypatch):
     from desktop_app.text_window import TextMainWindow
 
     monkeypatch.setattr(BrainWorker, "start", lambda self: None)
+    monkeypatch.setattr("desktop_app.core.SystemAudioSpectrum.start", lambda self: None)
     monkeypatch.setattr("desktop_app.services.DesktopServices.start", lambda self: None)
     monkeypatch.setattr("desktop_app.proactive_surface.ProactiveDesktopBridge.start", lambda self: None)
     window = TextMainWindow()

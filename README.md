@@ -61,3 +61,12 @@ that submitted the request, even when another chat is selected. Transcripts and
 the selected chat are saved privately in `RUNTIME_DIR/desktop_chats.json`; after
 a restart the recent conversation restores model context on its next request.
 All chats share the existing serialized worker and permissions.
+
+### Animated core
+
+The text window paints two perspective energy rings at 30 fps, with low idle
+motion and larger peaks while a request is running. No model calls are used for
+animation. System-audio FFT input is optional: an existing BlackHole, Loopback,
+Soundflower or Stereo Mix input must receive the system output. The default
+microphone is never opened; without a loopback device only work/idle animation
+is shown. Voice remains disabled.

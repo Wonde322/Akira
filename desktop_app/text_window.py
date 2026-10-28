@@ -356,6 +356,14 @@ class TextMainWindow(QMainWindow):
         self.status.setStyleSheet("color:#9a9aa4; padding:0 20px 8px;")
         layout.addWidget(self.status)
 
+        from .core import CoreWidget, SystemAudioSpectrum
+        self.core = CoreWidget()
+        layout.addWidget(self.core)
+        self.audio_spectrum = SystemAudioSpectrum(self)
+        self.audio_spectrum.spectrum.connect(self.core.set_spectrum)
+        self.audio_spectrum.available.connect(lambda available: self.core.setToolTip(
+            "Реакция на системный звук" if available else "Для реакции на музыку нужен настроенный loopback-выход, например BlackHole. Микрофон выключен."))
+        self.audio_spectrum.start()
         self.chat = TextChatView()
         layout.addWidget(self.chat, 1)
 
@@ -527,6 +535,7 @@ class TextMainWindow(QMainWindow):
         self.chat.set_typing(busy and chat_id == self.chat_store.active)
 
     def _on_busy(self, busy: bool):
+        self.core.set_working(busy)
         self._working = busy
         self.send.setEnabled(not self._closing)
         self.send.setText("■" if busy else "↑")
@@ -630,7 +639,7 @@ class TextMainWindow(QMainWindow):
         dialog.show()
 
     def _finish_close(self):
-        if not self.worker.isRunning() and not self.services.is_running():
+        if not self.worker.isRunning() and not self.services.is_running() and not self.audio_spectrum.isRunning():
             self._close_timer.stop()
             self.close()
 
@@ -648,6 +657,7 @@ class TextMainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self._closing = True
+        self.audio_spectrum.requestInterruption()
         self.input.setEnabled(False)
         self.send.setEnabled(False)
         self.stop.setEnabled(False)
@@ -662,7 +672,7 @@ class TextMainWindow(QMainWindow):
             request["answered"].set()
         self.worker.request_stop()
         self.services.request_stop()
-        if self.worker.isRunning() or self.services.is_running():
+        if self.worker.isRunning() or self.services.is_running() or self.audio_spectrum.isRunning():
             # Keep the QThread owner alive until any in-flight call returns.
             event.ignore()
             self._close_timer.start()
