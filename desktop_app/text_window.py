@@ -6,8 +6,9 @@ is owned by the Qt window and requests are serialized by BrainWorker.
 from __future__ import annotations
 
 from collections import deque
+import math
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QElapsedTimer, QRectF, QPointF
 from PySide6.QtGui import QFont, QPainter, QColor
 from PySide6.QtWidgets import (
     QComboBox,
@@ -28,25 +29,48 @@ from .worker import BrainWorker
 from .confirmation import ConfirmationService
 
 
+class ChatSelector(QComboBox):
+    """Open the history menu from the whole control, including its padding."""
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QColor("#aaaab5"))
+        x, y = self.width() - 18, self.height() / 2
+        painter.drawLine(QPointF(x - 4, y - 2), QPointF(x, y + 2))
+        painter.drawLine(QPointF(x, y + 2), QPointF(x + 4, y - 2))
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.showPopup()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+
 class TypingIndicator(QWidget):
     """A lightweight painted animation; no model calls or extra threads."""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedSize(72, 36)
         self.setAccessibleName("Акира печатает")
-        self.phase = 0
+        self.phase = 0.0
+        self.clock = QElapsedTimer()
         self.timer = QTimer(self)
-        self.timer.setInterval(160)
+        self.timer.setInterval(33)
         self.timer.timeout.connect(self._advance)
         self.hide()
 
     def _advance(self):
-        self.phase = (self.phase + 1) % 6
+        self.phase = self.clock.elapsed() / 1000.0
         self.update()
 
     def set_active(self, active):
         self.setVisible(active)
         if active:
+            if not self.timer.isActive():
+                self.clock.start()
+                self.phase = 0.0
             self.timer.start()
         else:
             self.timer.stop()
@@ -58,9 +82,10 @@ class TypingIndicator(QWidget):
         painter.setBrush(QColor("#1e1e24"))
         painter.drawRoundedRect(self.rect(), 14, 14)
         for index in range(3):
-            raised = self.phase == index * 2
-            painter.setBrush(QColor("#e4e4ec" if raised else "#777780"))
-            painter.drawEllipse(20 + index * 12, 11 if raised else 17, 6, 6)
+            wave = (math.sin(self.phase * math.tau / 1.2 - index * 0.8) + 1) / 2
+            shade = round(125 + 95 * wave)
+            painter.setBrush(QColor(shade, shade, min(255, shade + 8)))
+            painter.drawEllipse(QRectF(20 + index * 12, 17 - 5 * wave, 6, 6))
 
 
 class TextChatView(QScrollArea):
@@ -181,21 +206,44 @@ class TextMainWindow(QMainWindow):
 
         header = QLabel("AKIRA")
         header.setFont(QFont("SF Pro Display", 16, QFont.Weight.DemiBold))
-        header.setStyleSheet("color:#e8e8ee; padding:16px 20px;")
+        header.setStyleSheet("color:#e8e8ee; padding:0;")
         header_row = QHBoxLayout()
+        header_row.setContentsMargins(20, 16, 20, 14)
+        header_row.setSpacing(10)
         header_row.addWidget(header)
-        self.chat_selector = QComboBox()
+        header_row.addStretch(1)
+        self.chat_selector = ChatSelector()
         self.chat_selector.setMinimumWidth(180)
         self.chat_selector.setMaximumWidth(320)
-        self.chat_selector.setStyleSheet("background:#25252d; color:#e8e8ee; padding:8px; border-radius:8px;")
+        self.chat_selector.setFixedHeight(40)
+        self.chat_selector.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.chat_selector.setAccessibleName("История чатов")
+        self.chat_selector.setStyleSheet(
+            "QComboBox { background:#1e1e24; color:#e8e8ee; border:1px solid #34343e; "
+            "border-radius:10px; padding:0 16px; font-size:13px; }"
+            "QComboBox:hover { background:#282830; border-color:#555560; }"
+            "QComboBox:focus { border-color:#a93b4c; }"
+            "QComboBox::drop-down { border:0; width:28px; }"
+            "QComboBox::down-arrow { image:none;"
+            "QComboBox QAbstractItemView { background:#1e1e24; color:#e8e8ee; "
+            "selection-background-color:#702432; border:1px solid #3a3a44; outline:0; padding:6px; }"
+            "QComboBox QAbstractItemView::item { min-height:36px; padding:0 10px; }"
+        )
         self.chat_selector.currentIndexChanged.connect(self._switch_chat)
         header_row.addWidget(self.chat_selector, 1)
         self.new_chat = QPushButton("+ Новый чат")
-        self.new_chat.setStyleSheet("background:#25252d; color:#e8e8ee; padding:8px; border-radius:8px;")
+        self.new_chat.setFixedHeight(40)
+        self.new_chat.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.new_chat.setStyleSheet(
+            "QPushButton { background:#702432; color:#fff; border:1px solid #913344; "
+            "border-radius:10px; padding:0 14px; font-size:13px; }"
+            "QPushButton:hover { background:#873040; border-color:#b54b5c; }"
+            "QPushButton:pressed { background:#591d28; }"
+            "QPushButton:focus { border-color:#e08090; }"
+        )
         self.new_chat.setFixedWidth(120)
         self.new_chat.clicked.connect(self._create_chat)
         header_row.addWidget(self.new_chat)
-        header_row.addSpacing(20)
         layout.addLayout(header_row)
         self.status = QLabel("Готов")
         self.status.setStyleSheet("color:#9a9aa4; padding:0 20px 8px;")

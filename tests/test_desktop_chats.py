@@ -100,3 +100,20 @@ def test_worker_restores_recent_transcript_without_overwriting_live_session(qapp
     finally:
         worker.request_stop()
         assert worker.wait(1000)
+
+
+def test_header_controls_align_and_accept_clicks_across_surface(window, monkeypatch, qapp):
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+    window.show()
+    qapp.processEvents()
+    assert window.chat_selector.height() == window.new_chat.height() == 40
+    assert window.chat_selector.geometry().top() == window.new_chat.geometry().top()
+    opened = []
+    monkeypatch.setattr(window.chat_selector, 'showPopup', lambda: opened.append(True))
+    for point in (QPoint(4, 4), window.chat_selector.rect().center(), QPoint(window.chat_selector.width() - 4, 35)):
+        QTest.mouseClick(window.chat_selector, Qt.MouseButton.LeftButton, pos=point)
+    assert len(opened) == 3
+    count = len(window.chat_store.chats)
+    QTest.mouseClick(window.new_chat, Qt.MouseButton.LeftButton, pos=QPoint(5, 5))
+    assert len(window.chat_store.chats) == count + 1
