@@ -788,10 +788,10 @@ def _tools_for_reasoning(session, query, task_active):
 TOOLS = get_tool_schemas()
 
 def ask(message, session_id=None):
-    """Run a turn and discard unfinished computer state on cancellation."""
+    """Run a turn without leaking failed computer state into the next request."""
     try:
         return _ask(message, session_id=session_id)
-    except ExecutionCancelled:
+    except Exception:
         get_session(session_id).end_task()
         raise
 

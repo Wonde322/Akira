@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from agent_runtime import AgentRuntime
 from akira_gateway import AkiraGateway
 
@@ -54,3 +56,19 @@ def test_runtime_cancel_during_model_response_blocks_real_tool_dispatch(isolated
     assert result["error"] == "cancelled"
     assert calls == []
     assert not runtime.is_active("cancel-integration")
+
+
+def test_model_error_does_not_leave_an_old_computer_task_active(isolated_project, monkeypatch):
+    loop = isolated_project("agent_loop")
+    session = loop.get_session("failed-turn")
+    session.begin_task("old computer goal")
+
+    def create(**kwargs):
+        raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr(loop, "client", SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create))))
+    monkeypatch.setattr(loop, "build_memory_context", lambda *args, **kwargs: "")
+    monkeypatch.setattr(loop, "_tools_for_reasoning", lambda **kwargs: [])
+    with pytest.raises(RuntimeError, match="provider unavailable"):
+        AkiraGateway(AgentRuntime()).submit_text("test", metadata={"session_id": session.session_id})
+    assert session.task is None
