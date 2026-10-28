@@ -99,6 +99,13 @@ def _score(query, schema):
     return score
 
 
+def is_web_query(query):
+    return bool(re.search(
+        r"погугл|гугл|загугл|интернет|поиск.{0,24}(?:сети|веб|web)|найди.{0,24}(?:сети|сайт)|\b(?:google|search|web|browse)\b",
+        str(query or "").casefold(),
+    ))
+
+
 def _always_include(task_active):
     base = {"discover_capability"}
     if task_active:
@@ -116,6 +123,8 @@ def select_tool_schemas(query, schemas, limit=12, task_active=False, pinned_tool
     scored.sort(key=lambda item: (-item[0], item[1]))
 
     mandatory = _always_include(task_active)
+    if is_web_query(query):
+        mandatory.update({"browser_navigate", "browser_execute"})
     if pinned_tools:
         mandatory.update(str(name) for name in pinned_tools if name)
 
