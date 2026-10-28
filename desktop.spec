@@ -16,7 +16,7 @@ a = Analysis(
     ['desktop.py'],
     pathex=[str(project_dir)],
     binaries=[],
-    datas=[(str(project_dir / 'permissions.json'), '.')],
+    datas=[(str(project_dir / 'permissions.json'), '.'), (str(project_dir / 'assets' / 'core_atlas.png'), 'assets')],
     hiddenimports=sorted({tool.implementation_module for tool in TOOL_REGISTRY} | {"spotify_auth", "yt_dlp"}),
     hookspath=[str(project_dir / 'build' / 'hooks')] if (project_dir / 'build' / 'hooks').is_dir() else [],
     runtime_hooks=[],

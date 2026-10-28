@@ -1,18 +1,24 @@
 """Two perspective energy rings, painted locally without model/voice calls."""
-import math
 import time
 
-from PySide6.QtCore import Qt, QTimer, QPointF, QThread, Signal
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
+from PySide6.QtCore import QTimer, QThread, Signal
+from PySide6.QtGui import QPainter, QImage
 from PySide6.QtWidgets import QWidget
 
 
 class CoreWidget(QWidget):
+    """Composite offline-rendered frames; no live ring geometry."""
     def __init__(self, parent=None):
         super().__init__(parent)
+        from pathlib import Path
+        import sys
+        from PySide6.QtGui import QPixmap
+        root = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parents[1]))
+        sheet = QPixmap(str(root / 'assets' / 'core_atlas.png'))
+        self.frames = [sheet.copy((i % 8)*360, (i // 8)*210, 360, 210) for i in range(128)]
         self.setMinimumHeight(170)
         self.setMaximumHeight(250)
-        self.setAccessibleName('Ядро Акиры: два энергетических кольца')
+        self.setAccessibleName('Ядро Акиры: две волны плазмы')
         self.working = False
         self.bands = []
         self.audio_at = 0.0
@@ -43,49 +49,28 @@ class CoreWidget(QWidget):
         self.timer.stop()
         super().hideEvent(event)
 
-    def ring_points(self, radius, phase, count=96):
-        t = time.monotonic() - self.started
-        live = bool(self.bands) and time.monotonic() - self.audio_at < 0.5
-        points = []
-        for index in range(count):
-            angle = math.tau * index / count
-            wave = abs(math.sin(index * 1.71 + t * 2.3 + phase)) ** 5
-            wave *= 0.55 + 0.45 * math.sin(angle * 5 - t * 1.7) ** 2
-            if live:
-                wave = self.bands[index * len(self.bands) // count]
-            height = 2 + 2 * math.sin(angle * 4 + t * 0.65 + phase) ** 2
-            height += self.energy * (12 + 85 * wave)
-            x = math.cos(angle) * radius
-            y = math.sin(angle) * radius * 0.34
-            points.append((QPointF(x, y), QPointF(x + math.cos(angle) * height * 0.23, y - height)))
-        return points
-
     def paintEvent(self, event):
+        from PySide6.QtCore import QRectF
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.translate(self.width() / 2, self.height() * 0.68)
-        scale = min(1.0, self.width() / 500, self.height() / 230)
-        painter.scale(scale, scale)
-        for radius, phase, color in ((150, 0, '#ed5649'), (112, 1.8, '#f5c574')):
-            pairs = self.ring_points(radius, phase)
-            floor = QPainterPath()
-            floor.addEllipse(QPointF(0, 0), radius, radius * 0.34)
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            for width, alpha in ((9, 12), (4, 26), (1, 150)):
-                shade = QColor(color); shade.setAlpha(alpha)
-                painter.setPen(QPen(shade, width))
-                painter.drawPath(floor)
-            # Sort facets from back to front to keep the ring's perspective legible.
-            for index in sorted(range(len(pairs)), key=lambda i: pairs[i][0].y()):
-                base, tip = pairs[index]
-                next_base, _ = pairs[(index + 1) % len(pairs)]
-                shape = QPainterPath(base)
-                shape.lineTo(tip); shape.lineTo(next_base); shape.closeSubpath()
-                shade = QColor(color); shade.setAlpha(35 + int(40 * self.energy))
-                painter.setBrush(shade)
-                edge = QColor(color); edge.setAlpha(130)
-                painter.setPen(QPen(edge, 0.7))
-                painter.drawPath(shape)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        # Crossfade adjacent temporal frames and intensity banks on a fixed plane.
+        phase = ((time.monotonic() - self.started) * 12) % 32
+        bank = max(0.0, min(3.0, self.energy * 3))
+        first, blend = int(phase), phase % 1
+        low, amount = int(bank), bank % 1
+        size = min(self.width(), self.height() * 360 / 210)
+        rect = QRectF((self.width()-size)/2, (self.height()-size*210/360)/2, size, size*210/360)
+        canvas = QImage(360, 210, QImage.Format.Format_ARGB32_Premultiplied)
+        canvas.fill(0)
+        mixer = QPainter(canvas)
+        mixer.setCompositionMode(QPainter.CompositionMode.CompositionMode_Plus)
+        for level, weight in ((low, 1-amount), (min(3,low+1), amount)):
+            for index, opacity in ((first, 1-blend), ((first+1)%32, blend)):
+                if weight * opacity > 0:
+                    mixer.setOpacity(weight * opacity)
+                    mixer.drawPixmap(0, 0, self.frames[level*32+index])
+        mixer.end()
+        painter.drawImage(rect, canvas)
 
 
 class SystemAudioSpectrum(QThread):

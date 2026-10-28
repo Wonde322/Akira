@@ -64,9 +64,13 @@ All chats share the existing serialized worker and permissions.
 
 ### Animated core
 
-The text window paints two perspective energy rings at 30 fps, with low idle
+The text window plays an offline-rendered dual plasma-ring sprite atlas, with low idle
 motion and larger peaks while a request is running. No model calls are used for
 animation. System-audio FFT input is optional: an existing BlackHole, Loopback,
 Soundflower or Stereo Mix input must receive the system output. The default
 microphone is never opened; without a loopback device only work/idle animation
 is shown. Voice remains disabled.
+
+The atlas has 32 looping phases and four intensity banks. Rebuild it with
+`python scripts/render_core.py` (Pillow is needed only for this offline step).
+The desktop composites finished frames; it does not construct live ring geometry.

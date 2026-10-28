@@ -14,7 +14,8 @@ def test_core_idle_work_and_audio_have_separate_levels(qapp):
     core.set_spectrum([0.9] * 32)
     for _ in range(40): core._advance()
     assert core.energy > 0.8
-    assert len(core.ring_points(150, 0)) == 96
+    assert len(core.frames) == 128
+    assert all(not frame.isNull() for frame in core.frames)
     core.resize(600, 240)
     core.show(); qapp.processEvents()
     assert core.timer.isActive()
