@@ -14,7 +14,7 @@ def test_core_idle_work_and_audio_have_separate_levels(qapp):
     core.set_spectrum([0.9] * 32)
     for _ in range(40): core._advance()
     assert core.energy > 0.8
-    assert len(core.frames)==512
+    assert len(core.frames)==256
     assert all(not frame.isNull() for frame in core.frames)
     core.resize(600, 240)
     core.show(); qapp.processEvents()
@@ -78,7 +78,7 @@ def test_core_wrap_is_continuous_and_faster(qapp, monkeypatch):
     core = CoreWidget()
     core.resize(320, 210)
     core.energy = .025
-    core.phase = 127.999
+    core.phase = 255.999
     before = core.grab().toImage()
     core.phase = .001
     after = core.grab().toImage()
@@ -87,9 +87,28 @@ def test_core_wrap_is_continuous_and_faster(qapp, monkeypatch):
     a = np.frombuffer(before.bits(), dtype=np.uint8).astype(float)
     b = np.frombuffer(after.bits(), dtype=np.uint8).astype(float)
     assert np.abs(a-b).mean() < 1
-    core.phase = 127
+    core.phase = 255
     now = core.last_tick + .05
     monkeypatch.setattr('desktop_app.core.time.monotonic', lambda: now)
     core._advance()
-    assert 0 < core.phase < 2
+    assert 0 < core.phase < 4
     assert core.timer.interval() == 16
+
+
+def test_prepared_cycle_has_no_outlier_at_loop_seam(qapp):
+    import numpy as np
+    from PySide6.QtGui import QImage
+    from desktop_app.core import CoreWidget
+    core = CoreWidget()
+    def pixels(index):
+        image = core.frames[index].toImage().convertToFormat(QImage.Format.Format_RGBA8888_Premultiplied)
+        return np.frombuffer(image.bits(), dtype=np.uint8).astype(np.int16)
+    first = previous = pixels(0)
+    differences = []
+    for index in range(1, len(core.frames)):
+        current = pixels(index)
+        differences.append(np.abs(current-previous).mean())
+        previous = current
+    seam = np.abs(first-previous).mean()
+    assert np.median(differences) > 0
+    assert seam < 2 * np.median(differences)
