@@ -10,6 +10,7 @@ import agent_loop as _agent_loop
 SYSTEM_PROMPT = _agent_loop.SYSTEM_PROMPT
 SYSTEM = SYSTEM_PROMPT
 TOOLS = _agent_loop.TOOLS
+conversation = _agent_loop.conversation
 get_permission = _agent_loop.get_permission
 get_tool_implementation = _agent_loop.get_tool_implementation
 
@@ -20,6 +21,10 @@ def _tool_result_text(result):
 
 def execute_tool_result(function_name, arguments):
     return _agent_loop.execute_tool_result(function_name, arguments)
+
+
+def execute_tool(function_name, arguments):
+    return _agent_loop.execute_tool(function_name, arguments)
 
 
 def ask(message, session_id=None):

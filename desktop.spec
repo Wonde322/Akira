@@ -1,29 +1,24 @@
 # -*- mode: python ; coding: utf-8 -*-
 """PyInstaller spec: Akira.app (windowed onedir bundle)."""
 
+from pathlib import Path
+import sys
+
+project_dir = Path(SPECPATH).resolve()
+sys.path.insert(0, str(project_dir))
+from tool_registry import TOOL_REGISTRY
+
+icon_file = project_dir / "assets" / "akira.icns"
+icon = str(icon_file) if icon_file.is_file() else None
 block_cipher = None
 
 a = Analysis(
     ['desktop.py'],
-    pathex=['/Users/wonde/Akira'],
+    pathex=[str(project_dir)],
     binaries=[],
-    datas=[],
-    hiddenimports=[
-        'webrtcvad',
-        'sounddevice',
-        'soundfile',
-        'numpy',
-        'groq',
-        'capabilities.observe',
-        'capabilities.apps',
-        'capabilities.filesystem',
-        'capabilities.shell',
-        'capabilities.wait',
-        'capabilities.key',
-        'capabilities.gui',
-        'capabilities.task',
-    ],
-    hookspath=['/Users/wonde/Akira/build/hooks'],
+    datas=[(str(project_dir / 'permissions.json'), '.'), (str(project_dir / 'assets' / 'core_motion.png'), 'assets')],
+    hiddenimports=sorted({tool.implementation_module for tool in TOOL_REGISTRY} | {"spotify_auth", "yt_dlp"}),
+    hookspath=[str(project_dir / 'build' / 'hooks')] if (project_dir / 'build' / 'hooks').is_dir() else [],
     runtime_hooks=[],
     excludes=[],
     win_no_prefer_redirects=False,
@@ -49,7 +44,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='/tmp/akira.icns',
+    icon=icon,
 )
 coll = COLLECT(
     exe,
@@ -64,7 +59,7 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name='Akira.app',
-    icon='/tmp/akira.icns',
+    icon=icon,
     bundle_identifier='com.akira.desktop',
     info_plist={
         'CFBundleDisplayName': 'Akira',
@@ -72,10 +67,6 @@ app = BUNDLE(
         'CFBundleShortVersionString': '1.0.0',
         'CFBundleVersion': '1',
         'CFBundleIdentifier': 'com.akira.desktop',
-        'NSMicrophoneUsageDescription': (
-            'Акира использует микрофон для распознавания речи, '
-            'голосовых команд и диалога.'
-        ),
         'NSHighResolutionCapable': True,
         'LSMinimumSystemVersion': '12.0',
     },

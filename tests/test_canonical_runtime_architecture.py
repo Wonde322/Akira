@@ -27,7 +27,7 @@ def test_gateway_passes_one_normalized_request_to_runtime():
     assert request.primary_text() == "сделай что-нибудь"
     assert request.source == "text"
     assert request.metadata["session_id"] == "test"
-    assert kwargs == {}
+    assert kwargs == {"task_id": request.request_id}
 
 
 def test_default_gateway_runtime_is_agent_runtime():

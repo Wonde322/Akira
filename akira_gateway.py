@@ -12,8 +12,9 @@ from request_context import create_request_context
 class AkiraGateway:
     """Normalize input and hand it to the canonical runtime."""
 
-    def __init__(self, runtime: AgentRuntime | None = None):
+    def __init__(self, runtime: AgentRuntime | None = None, on_status=None):
         self.runtime = runtime or get_agent_runtime()
+        self.on_status = on_status
 
     def submit(
         self,
@@ -38,7 +39,10 @@ class AkiraGateway:
                 "error": "empty_request",
                 "output": "Пустой запрос.",
             }
-        return self.runtime.run(request, task_id=request.request_id)
+        kwargs = {"task_id": request.request_id}
+        if self.on_status is not None:
+            kwargs["on_status"] = self.on_status
+        return self.runtime.run(request, **kwargs)
 
     def cancel(self, request_id):
         return self.runtime.cancel(request_id)
@@ -69,5 +73,5 @@ class AkiraGateway:
         )
 
 
-def create_gateway(runtime: AgentRuntime | None = None):
-    return AkiraGateway(runtime=runtime)
+def create_gateway(runtime: AgentRuntime | None = None, on_status=None):
+    return AkiraGateway(runtime=runtime, on_status=on_status)

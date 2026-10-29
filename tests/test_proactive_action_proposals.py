@@ -20,7 +20,7 @@ def test_long_dwell_gets_contextual_choices():
 def test_runtime_attaches_proposals_to_high_signal_question(tmp_path):
     inbox = ProactiveInbox(tmp_path / "inbox.json")
     runtime = ProactiveRuntime(inbox=inbox, dedupe_seconds=0)
-    event = {"id": "evt-1", "type": "desktop.context.repeated", "payload": {"count": 3, "active_task": {"goal": "Проверить макет", "confidence": 0.9}}}
+    event = {"id": "evt-1", "type": "desktop.context.repeated", "payload": {"active_goal": {"title": "Проверить макет", "confidence": 0.9, "urgency": 0.95, "deadline": "2026-10-28T20:00:00+04:00"}, "count": 3, "active_task": {"goal": "Проверить макет", "confidence": 0.9}}}
     result = runtime.handle(event)
     assert result["decision"]["action"] == ProactiveAction.ASK_USER.value
     assert result["attention"]["proposals"]

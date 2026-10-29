@@ -83,9 +83,9 @@ def test_confirm_tool_is_denied_when_context_cannot_prompt(isolated_project, mon
     brain = isolated_project("brain")
     permissions = isolated_project("permissions")
     permissions.set_confirmation_provider(permissions.deny_all)
-    monkeypatch.setattr(brain, "get_permission", lambda _: "confirm")
+    monkeypatch.setattr(brain._agent_loop, "get_permission", lambda _: "confirm")
     called = []
-    monkeypatch.setattr(brain, "get_tool_implementation", lambda _: lambda: called.append(True))
+    monkeypatch.setattr(brain._agent_loop, "get_tool_implementation", lambda _: lambda: called.append(True))
     result = brain.execute_tool("action", {})
     assert result == "Пользователь не разрешил выполнение действия."
     assert called == []

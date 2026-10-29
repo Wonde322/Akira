@@ -715,7 +715,7 @@ def browser_click(selector, tab_id=None):
     expression = (
         "(function(){"
         "const el=document.querySelector("
-        + repr(selector)
+        + json.dumps(str(selector))
         + ");"
         "if(!el){"
         "return {success:false,error:'element_not_found'};"
@@ -725,10 +725,17 @@ def browser_click(selector, tab_id=None):
         "})()"
     )
 
-    return browser_execute(
+    return _dom_action_result(browser_execute(
         expression,
         tab_id=tab_id,
-    )
+    ))
+
+
+def _dom_action_result(result):
+    value = result.get("value")
+    if result.get("success") and isinstance(value, dict) and value.get("success") is False:
+        return {**result, "success": False, "error": value.get("error") or "dom_action_failed"}
+    return result
 
 
 def browser_type(selector, text, tab_id=None):
@@ -744,29 +751,30 @@ def browser_type(selector, text, tab_id=None):
     expression = (
         "(function(){"
         "const el=document.querySelector("
-        + repr(selector)
+        + json.dumps(str(selector))
         + ");"
         "if(!el){"
         "return {success:false,error:'element_not_found'};"
         "}"
         "el.focus();"
         "if('value' in el){"
-        "el.value="
-        + repr(text)
-        + ";"
+        "const setter=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el),'value')?.set;"
+        "const value="
+        + json.dumps(str(text))
+        + ";if(setter){setter.call(el,value);}else{el.value=value;}"
         "el.dispatchEvent(new Event('input',{bubbles:true}));"
         "el.dispatchEvent(new Event('change',{bubbles:true}));"
         "}"
         "else{"
         "el.textContent="
-        + repr(text)
+        + json.dumps(str(text))
         + ";"
         "}"
         "return {success:true};"
         "})()"
     )
 
-    return browser_execute(
+    return _dom_action_result(browser_execute(
         expression,
         tab_id=tab_id,
-    )
+    ))

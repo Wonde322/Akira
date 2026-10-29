@@ -1,6 +1,7 @@
 """Delivery bridge between the proactive inbox and Akira's live surfaces."""
 from __future__ import annotations
 import threading
+from datetime import datetime, timedelta
 from event_bus import emit_event
 from proactive_inbox import get_proactive_inbox
 from proactive_action_execution import get_proactive_action_executor
@@ -17,7 +18,7 @@ class ProactiveDelivery:
         self._feedback_store = feedback_store
         self._lock = threading.RLock(); self._pending_questions = {}
 
-    def discard_startup_notifications(self, limit=100):
+    def discard_startup_notifications(self, limit=200):
         """Acknowledge stale notify items left from an earlier app process.
 
         Persistent notifications are useful for non-UI consumers, but replaying
@@ -25,9 +26,19 @@ class ProactiveDelivery:
         internal context into the conversation. Pending questions are preserved.
         """
         discarded = []
+        now = datetime.now().astimezone()
         for item in self._inbox.list(limit=limit, unread_only=True):
             if item.get("action") == "ask_user":
                 continue
+            if item.get("event_type") in {"task.completed", "task.failed", "task.cancelled", "task.interrupted"}:
+                try:
+                    created = datetime.fromisoformat(str(item.get("created_at", "")).replace("Z", "+00:00"))
+                    if created.tzinfo is None:
+                        created = created.astimezone()
+                    if timedelta(minutes=-5) <= now - created <= timedelta(days=1):
+                        continue
+                except (TypeError, ValueError):
+                    pass
             item_id = item.get("id")
             if not item_id:
                 continue
@@ -40,6 +51,10 @@ class ProactiveDelivery:
         delivered=[]; items=list(reversed(self._inbox.list(limit=limit, unread_only=True)))
         for item in items:
             item_id=item.get("id"); action=item.get("action")
+            # Do not replay old ambient commentary left by previous versions.
+            if item.get("event_type") in {"desktop.context.dwell", "desktop.context.repeated"} and item.get("reason") in {"context_dwell", "context_repeated", "repeated_task_context_low_confidence", "task_context_dwell"}:
+                self._inbox.acknowledge(item_id)
+                continue
             if action=="ask_user":
                 with self._lock:
                     if item_id in self._pending_questions: continue
@@ -76,6 +91,12 @@ class ProactiveDelivery:
             if handled.get("handled") and not handled.get("success",False):return {**result,"success":False,"error":"action_handler_failed"}
         with self._lock:self._pending_questions.pop(key,None)
         acknowledgement=self._inbox.acknowledge(item.get("id")); result["item"]=acknowledgement.get("item"); return result
+
+    def dismiss(self, item_id):
+        item = self._take_pending(item_id)
+        if item is None:
+            return {"success": False, "error": "question_not_pending"}
+        return self._inbox.acknowledge(item.get("id"))
 
 _delivery=None; _delivery_lock=threading.Lock()
 def get_proactive_delivery():

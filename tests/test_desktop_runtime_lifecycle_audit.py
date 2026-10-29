@@ -217,14 +217,14 @@ def test_wake_command_emits_text_and_thinking(qapp):
 def test_worker_prepare_start_discards_only_shutdown_sentinels(qapp):
     from desktop_app.worker import BrainWorker
     worker = BrainWorker()
-    worker._queue.put("one")
+    worker._queue.put(("one", "id-1"))
     worker._queue.put(None)
-    worker._queue.put("two")
-    worker._stop = True
+    worker._queue.put(("two", "id-2"))
+    worker._stop_event.set()
     worker._prepare_start()
-    assert worker._stop is False
-    assert worker._queue.get_nowait() == "one"
-    assert worker._queue.get_nowait() == "two"
+    assert worker._stop_event.is_set() is False
+    assert worker._queue.get_nowait() == ("one", "id-1")
+    assert worker._queue.get_nowait() == ("two", "id-2")
     with pytest.raises(queue.Empty):
         worker._queue.get_nowait()
 
@@ -235,7 +235,7 @@ def test_worker_prepare_start_is_idempotent(qapp):
     worker.submit("message")
     worker._prepare_start()
     worker._prepare_start()
-    assert worker._queue.get_nowait() == "message"
+    assert worker._queue.get_nowait()[0] == "message"
 
 
 def test_worker_submit_none_is_ignored(qapp):
@@ -250,7 +250,7 @@ def test_worker_request_stop_sets_flag_and_sentinel(qapp):
     from desktop_app.worker import BrainWorker
     worker = BrainWorker()
     worker.request_stop()
-    assert worker._stop is True
+    assert worker._stop_event.is_set() is True
     assert worker._queue.get_nowait() is None
 
 
@@ -259,7 +259,7 @@ def test_worker_prepare_start_after_stop_clears_shutdown(qapp):
     worker = BrainWorker()
     worker.request_stop()
     worker._prepare_start()
-    assert worker._stop is False
+    assert worker._stop_event.is_set() is False
     with pytest.raises(queue.Empty):
         worker._queue.get_nowait()
 

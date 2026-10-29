@@ -45,7 +45,7 @@ def test_create_groq_client_requires_env_only_at_call_time(monkeypatch, tmp_path
 
         monkeypatch.setenv("GROQ_API_KEY", "test-key")
         client = config.create_groq_client()
-        assert client == {"api_key": "test-key"}
+        assert client == {"api_key": "test-key", "timeout": 30.0, "max_retries": 0}
     finally:
         _clear_modules()
 

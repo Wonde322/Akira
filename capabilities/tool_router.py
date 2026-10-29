@@ -1,8 +1,7 @@
 """Lightweight relevance router for Akira tools.
 
-Routing is based on the language present in tool names/descriptions rather than
-an application-specific alias table. Deterministic desktop commands are handled
-by the gateway fast path before this router is needed.
+Routing uses tool names/descriptions and the caller's conversation context.
+Ambiguity keeps the small discovery surface rather than exposing every tool.
 """
 from __future__ import annotations
 
@@ -23,6 +22,12 @@ _CYRILLIC_TO_LATIN = str.maketrans({
     "к":"k","л":"l","м":"m","н":"n","о":"o","п":"p","р":"r","с":"s","т":"t","у":"u","ф":"f",
     "х":"h","ц":"c","ч":"ch","ш":"sh","щ":"sch","ъ":"","ы":"y","ь":"","э":"e","ю":"yu","я":"ya",
 })
+
+# Universal operation vocabulary, independent of any application names.
+_OPERATION_STEMS = {
+    "otkro": "open", "otkry": "open", "zapus": "open",
+    "zakro": "close", "zakry": "close",
+}
 
 
 def _normalize_word(token: str) -> str:
@@ -49,7 +54,11 @@ def _tokens(text):
             continue
         result.add(raw)
         result.add(normalized)
-        result.add(_stem(normalized))
+        stem = _stem(normalized)
+        result.add(stem)
+        operation = _OPERATION_STEMS.get(stem)
+        if operation:
+            result.add(operation)
     return result
 
 
@@ -90,10 +99,17 @@ def _score(query, schema):
     return score
 
 
+def is_web_query(query):
+    return bool(re.search(
+        r"погугл|гугл|загугл|интернет|поиск.{0,24}(?:сети|веб|web)|найди.{0,24}(?:сети|сайт)|\b(?:google|search|web|browse)\b",
+        str(query or "").casefold(),
+    ))
+
+
 def _always_include(task_active):
-    base = {"finish_task", "discover_capability", "verify_goal"}
+    base = {"discover_capability"}
     if task_active:
-        base.update({"plan_task", "update_task_plan", "complete_plan_step", "fail_plan_step"})
+        base.update({"finish_task", "verify_goal", "observe", "plan_task", "update_task_plan", "complete_plan_step", "fail_plan_step"})
     return base
 
 
@@ -107,6 +123,8 @@ def select_tool_schemas(query, schemas, limit=12, task_active=False, pinned_tool
     scored.sort(key=lambda item: (-item[0], item[1]))
 
     mandatory = _always_include(task_active)
+    if is_web_query(query):
+        mandatory.add("web_search")
     if pinned_tools:
         mandatory.update(str(name) for name in pinned_tools if name)
 
@@ -127,9 +145,6 @@ def select_tool_schemas(query, schemas, limit=12, task_active=False, pinned_tool
         selected_names.add(name)
         remaining -= 1
 
-    useful = [score for score, _, _ in scored if score > 0]
-    if not useful or max(useful) < 1.0:
-        return list(schemas)
     return selected
 
 

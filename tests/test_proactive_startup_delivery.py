@@ -57,3 +57,33 @@ def test_bridge_start_discards_stale_items_before_polling():
 
     assert delivery.discarded == 1
     assert delivery.polled == 0
+
+
+def test_startup_discards_entire_old_terminal_backlog(tmp_path):
+    from proactive_inbox import ProactiveInbox
+    inbox = ProactiveInbox(tmp_path / 'inbox.json')
+    # More than the old list()/startup limit of 100; all are terminal events.
+    for index in range(142):
+        inbox.push('old test notification', event={'id': str(index), 'type': 'task.completed'})
+    for item in inbox._items:
+        item['created_at'] = '2026-08-21T09:10:37+04:00'
+    inbox._save()
+    delivery = ProactiveDelivery(inbox=inbox, emit=lambda *a, **k: {})
+    assert len(delivery.discard_startup_notifications()) == 142
+    seen = []
+    for _ in range(10):
+        delivery.poll(on_notify=seen.append)
+    assert seen == []
+    assert not inbox.list(unread_only=True)
+
+
+def test_recent_real_completion_is_delivered_only_once(tmp_path):
+    from proactive_inbox import ProactiveInbox
+    inbox = ProactiveInbox(tmp_path / 'inbox.json')
+    inbox.push('new result', event={'id': 'completion', 'type': 'task.completed'})
+    delivery = ProactiveDelivery(inbox=inbox, emit=lambda *a, **k: {})
+    assert delivery.discard_startup_notifications() == []
+    seen = []
+    for _ in range(5):
+        delivery.poll(on_notify=seen.append)
+    assert len(seen) == 1

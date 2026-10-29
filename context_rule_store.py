@@ -6,8 +6,10 @@ import threading
 import uuid
 from pathlib import Path
 
+from config import RUNTIME_DIR
+
 ROOT = Path(__file__).resolve().parent
-DEFAULT_RULES_FILE = ROOT / "runtime" / "context_rules.json"
+DEFAULT_RULES_FILE = RUNTIME_DIR / "context_rules.json"
 
 
 def _text(value):

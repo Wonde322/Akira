@@ -7,6 +7,8 @@ logic independent from the concrete visual design.
 
 from __future__ import annotations
 
+from collections import deque
+
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from proactive_delivery import get_proactive_delivery
@@ -23,6 +25,7 @@ class ProactiveDesktopBridge(QObject):
         self._timer.setInterval(max(100, int(interval_ms)))
         self._timer.timeout.connect(self.poll)
         self._active_question_id = None
+        self._queued_questions = deque()
 
     @property
     def active_question_id(self):
@@ -48,6 +51,8 @@ class ProactiveDesktopBridge(QObject):
 
     def _on_question(self, item):
         if self._active_question_id is not None:
+            if item.get("id") != self._active_question_id and not any(q.get("id") == item.get("id") for q in self._queued_questions):
+                self._queued_questions.append(dict(item))
             return
         self._active_question_id = item.get("id")
         self.question.emit(dict(item))
@@ -57,8 +62,23 @@ class ProactiveDesktopBridge(QObject):
         if item_id is None:
             return {"success": False, "error": "no_active_question"}
         result = self._delivery.answer(item_id, text)
+        return self._advance(result)
+
+    def select(self, proposal_id):
+        if self._active_question_id is None:
+            return {"success": False, "error": "no_active_question"}
+        return self._advance(self._delivery.select(self._active_question_id, proposal_id))
+
+    def dismiss(self):
+        if self._active_question_id is None:
+            return {"success": False, "error": "no_active_question"}
+        return self._advance(self._delivery.dismiss(self._active_question_id))
+
+    def _advance(self, result):
         if result.get("success"):
             self._active_question_id = None
-            # There may already be another pending question in the inbox.
-            self.poll()
+            if self._queued_questions:
+                self._on_question(self._queued_questions.popleft())
+            else:
+                self.poll()
         return result

@@ -7,8 +7,10 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
+from config import RUNTIME_DIR
+
 ROOT = Path(__file__).resolve().parent
-STATE_FILE = ROOT / "runtime" / "awareness_state.json"
+STATE_FILE = RUNTIME_DIR / "awareness_state.json"
 
 
 class AwarenessRuntime:
@@ -45,6 +47,8 @@ class AwarenessRuntime:
         try: data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
         except Exception: return
         if not isinstance(data, dict): return
+        if isinstance(data.get("enabled"), bool):
+            self.enabled = data["enabled"]
         self._last_fingerprint = data.get("last_fingerprint")
         self._last_state = data.get("last_state")
         self._sample_count = int(data.get("sample_count", 0))
@@ -104,15 +108,17 @@ class AwarenessRuntime:
             except Exception as error: results.append({"success": False, "error": str(error)})
         return results
 
-    def sample(self):
+    def sample(self, capture=True):
         with self._lock:
             if not self.enabled:
                 return {"success": True, "enabled": False, "changed": False, "patterns": [], "output": "Desktop awareness отключён."}
         try:
             from capabilities.observe import capture_screenshot, screen_size, ui_metadata
-            screenshot_path, error = capture_screenshot()
-            if error:
-                return {"success": False, "error": "screenshot_error", "changed": False, "patterns": [], "output": str(error)}
+            screenshot_path = None
+            if capture:
+                screenshot_path, error = capture_screenshot()
+                if error:
+                    return {"success": False, "error": "screenshot_error", "changed": False, "patterns": [], "output": str(error)}
             size_result = screen_size()
             screen = size_result.get("data") if size_result.get("success") else None
             ui = ui_metadata()

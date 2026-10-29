@@ -14,10 +14,13 @@ import time
 from proactive_interruption_control import get_proactive_interruption_control
 
 
+from config import RUNTIME_DIR
+
+
 class ProactiveAttentionBudget:
-    def __init__(self, path="runtime/proactive_attention_budget.json", max_points=6,
+    def __init__(self, path=None, max_points=6,
                  refill_seconds=10 * 60, clock=None, interruption_control=None):
-        self.path = path
+        self.path = str(path) if path is not None else str(RUNTIME_DIR / "proactive_attention_budget.json")
         self.max_points = max(1.0, float(max_points))
         self.refill_seconds = max(1.0, float(refill_seconds))
         self._clock = clock or time.time

@@ -52,7 +52,7 @@ class AgentRuntime:
         with self._lock:
             self._executor = executor
 
-    def run(self, request, session_id=None, *, mode="auto", task_id=None):
+    def run(self, request, session_id=None, *, mode="auto", task_id=None, on_status=None):
         goal, session_id, source = self._normalize_request(request, session_id)
         if not goal:
             raise ValueError("AgentRuntime requires a non-empty goal")
@@ -80,6 +80,7 @@ class AgentRuntime:
             mode=policy.value,
             task_id=task_key,
             _cancel_event=cancel_event,
+            _on_status=on_status,
         )
         token = activate_execution(context)
         try:
@@ -94,6 +95,8 @@ class AgentRuntime:
                 "output": "Выполнение отменено.",
             }
         finally:
+            from computer_access import release_desktop
+            release_desktop(context)
             deactivate_execution(token)
             if task_key:
                 with self._lock:

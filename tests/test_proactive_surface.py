@@ -70,3 +70,39 @@ def test_desktop_bridge_rejects_answer_without_question():
         "success": False,
         "error": "no_active_question",
     }
+
+
+def test_multiple_pending_questions_are_presented_in_order(tmp_path):
+    from proactive_delivery import ProactiveDelivery
+    from proactive_inbox import ProactiveInbox
+    _app()
+    inbox = ProactiveInbox(path=tmp_path / 'inbox.json')
+    inbox.push('first?', action='ask_user')
+    inbox.push('second?', action='ask_user')
+    delivery = ProactiveDelivery(inbox=inbox, emit=lambda *a, **k: {})
+    bridge = ProactiveDesktopBridge(delivery=delivery)
+    questions = []
+    bridge.question.connect(lambda item: questions.append(item['message']))
+    bridge.poll()
+    assert questions == ['first?']
+    bridge.answer('yes')
+    assert questions == ['first?', 'second?']
+    bridge.answer('no')
+    assert bridge.active_question_id is None
+    assert not inbox.list(unread_only=True)
+
+
+def test_dismissing_question_does_not_emit_an_answer_or_start_work(tmp_path):
+    from proactive_delivery import ProactiveDelivery
+    from proactive_inbox import ProactiveInbox
+    _app()
+    inbox = ProactiveInbox(path=tmp_path / 'inbox.json')
+    inbox.push('question?', action='ask_user')
+    events = []
+    delivery = ProactiveDelivery(inbox=inbox, emit=lambda *a, **k: events.append(a))
+    bridge = ProactiveDesktopBridge(delivery=delivery)
+    bridge.poll()
+    assert bridge.dismiss()['success']
+    assert not events
+    assert not inbox.list(unread_only=True)
+    assert bridge.active_question_id is None

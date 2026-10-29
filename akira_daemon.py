@@ -28,13 +28,14 @@ class DaemonState:
 class AkiraDaemon:
     """Persistent host for one AkiraRuntime instance."""
 
-    def __init__(self, runtime=None, heartbeat_interval=5.0):
+    def __init__(self, runtime=None, heartbeat_interval=5.0, heartbeat=None):
         if not isinstance(heartbeat_interval, (int, float)) or isinstance(heartbeat_interval, bool) or heartbeat_interval <= 0:
             raise ValueError("heartbeat_interval must be a positive number")
         if runtime is None:
             from akira_runtime import AkiraRuntime
             runtime = AkiraRuntime()
         self.runtime = runtime
+        self._heartbeat = heartbeat
         self.heartbeat_interval = float(heartbeat_interval)
         self.state = DaemonState()
         self._stop_event = Event()
@@ -74,9 +75,24 @@ class AkiraDaemon:
                 raise
 
     def _heartbeat_loop(self):
-        while not self._stop_event.is_set():
-            self.tick()
-            self._stop_event.wait(self.heartbeat_interval)
+        try:
+            while not self._stop_event.is_set():
+                self.tick()
+                self._stop_event.wait(self.heartbeat_interval)
+        finally:
+            with self._lock:
+                self.state.status = "stopped"
+                self.state.stopped_at = time.time()
+
+    @property
+    def is_alive(self):
+        return self._thread is not None and self._thread.is_alive()
+
+    def request_stop(self):
+        with self._lock:
+            self._stop_event.set()
+            if self.running:
+                self.state.status = "stopping"
 
     def tick(self):
         if not self.running:
@@ -84,7 +100,7 @@ class AkiraDaemon:
         with self._lock:
             self.state.cycles += 1
         try:
-            heartbeat = getattr(self.runtime, "heartbeat_tick", None)
+            heartbeat = self._heartbeat or getattr(self.runtime, "heartbeat_tick", None)
             if callable(heartbeat):
                 result = heartbeat()
                 return result if result is not None else []

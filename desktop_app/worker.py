@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import queue
+import logging
 import threading
 import uuid
 
@@ -23,6 +24,17 @@ def _simple_greeting(message):
 def _friendly_error(error):
     text = str(error or "").strip()
     lowered = text.casefold()
+    status = getattr(error, "status_code", None)
+    if status == 429 or "rate_limit_exceeded" in lowered or "rate limit reached" in lowered:
+        from model_requests import retry_seconds
+        delay = retry_seconds(error)
+        if delay is not None:
+            return f"Достигнут лимит модели. Повтори запрос через {max(1, int(delay) + 1)} с."
+        return "Достигнут лимит модели. Подожди немного и повтори запрос."
+    if "tool_use_failed" in lowered:
+        return "Модель не смогла корректно выбрать инструмент. Повтори запрос."
+    if status == 400:
+        return "Модель отклонила запрос. Подробности ошибки — в терминале."
     if "invalid api key" in lowered or "api key" in lowered or "api_key" in lowered or "groq_api_key" in lowered:
         return "Не удалось обратиться к модели: проверь GROQ_API_KEY."
     if "denied" in lowered or "запрещ" in lowered:
@@ -32,11 +44,11 @@ def _friendly_error(error):
 
 def _response_text(result):
     if isinstance(result, dict):
+        if result.get("error") == "cancelled":
+            return ""
         for key in ("response", "output", "answer"):
             if result.get(key):
                 return str(result[key])
-        if result.get("error") == "cancelled":
-            return ""
         if result.get("error"):
             return _friendly_error(result["error"])
     return str(result or "Не получил ответ.")
@@ -45,6 +57,9 @@ def _response_text(result):
 class BrainWorker(QThread):
     """Own the desktop FIFO and cancel the active runtime request cooperatively."""
 
+    chat_answer = Signal(str, str)
+    chat_error = Signal(str, str)
+    chat_busy = Signal(str, bool)
     answer_ready = Signal(str)
     error = Signal(str)
     activity = Signal(str)
@@ -58,6 +73,7 @@ class BrainWorker(QThread):
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
         self._active_request_id = None
+        self._active_session_id = None
         self._gateway = None
 
     @staticmethod
@@ -65,12 +81,35 @@ class BrainWorker(QThread):
         return str(message or "").strip().casefold().strip(" .,!?:;") in _STOP_WORDS
 
     def _gateway_instance(self):
-        if self._gateway is None:
-            from akira_gateway import create_gateway
-            self._gateway = create_gateway()
-        return self._gateway
+        with self._lock:
+            if self._gateway is None:
+                from akira_gateway import create_gateway
+                self._gateway = create_gateway(on_status=self.activity.emit)
+            return self._gateway
 
-    def submit(self, message):
+    def _prepare_start(self):
+        """Remove shutdown sentinels before starting a fresh worker thread."""
+        with self._lock:
+            self._stop_event.clear()
+            pending = []
+            while True:
+                try:
+                    item = self._queue.get_nowait()
+                except queue.Empty:
+                    break
+                if item is not None:
+                    pending.append(item)
+            for item in pending:
+                self._queue.put(item)
+
+    def start(self, priority=QThread.Priority.InheritPriority):
+        with self._lock:
+            if self.isRunning():
+                return
+            self._prepare_start()
+            super().start(priority)
+
+    def submit(self, message, session_id=None, history=None):
         if message is None:
             return
         message = str(message).strip()
@@ -83,32 +122,46 @@ class BrainWorker(QThread):
         with self._lock:
             if self._stop_event.is_set():
                 return
-            self._queue.put((message, str(uuid.uuid4())))
+            self._queue.put((message, str(uuid.uuid4()), session_id or self.session_id, history))
+
+    def discard_pending(self, session_id):
+        with self._lock:
+            keep = []
+            while True:
+                try:
+                    item = self._queue.get_nowait()
+                except queue.Empty:
+                    break
+                if item is None or item[2] != session_id:
+                    keep.append(item)
+            for item in keep:
+                self._queue.put(item)
+            cancel_active = self._active_session_id == session_id
+        if cancel_active:
+            self.cancel_current()
 
     def cancel_current(self):
         with self._lock:
             request_id = self._active_request_id
+            # Invalidate late results even if a provider raises during cancel.
+            self._active_request_id = None
         if not request_id:
             return False
-        return bool(self._gateway_instance().cancel(request_id))
+        self._gateway_instance().cancel(request_id)
+        return True
 
     def request_stop(self):
         with self._lock:
             self._stop_event.set()
-            request_id = self._active_request_id
             while True:
                 try:
                     self._queue.get_nowait()
                 except queue.Empty:
                     break
-        if request_id:
-            self._gateway_instance().cancel(request_id)
-        if not self.isRunning():
-            return
+        self.cancel_current()
         self._queue.put(None)
 
     def run(self):
-        self._stop_event.clear()
         while True:
             try:
                 item = self._queue.get(timeout=0.1)
@@ -120,31 +173,44 @@ class BrainWorker(QThread):
             if item is None:
                 return
 
-            message, request_id = item
+            message, request_id, session_id, history = item
             with self._lock:
                 if self._stop_event.is_set():
                     continue
                 self._active_request_id = request_id
+                self._active_session_id = session_id
+            self.chat_busy.emit(session_id, True)
             self.busy.emit(True)
 
             try:
+                if history:
+                    from agent_loop import get_session
+                    session = get_session(session_id)
+                    if not session.history:
+                        session.history = [{'role': 'assistant' if m['role'] == 'akira' else 'user', 'content': m.get('context', m['text'])} for m in history]
+                        session.trim()
                 result = self._gateway_instance().submit_text(
                     message,
-                    metadata={"session_id": self.session_id},
+                    metadata={"session_id": session_id},
                     request_id=request_id,
                 )
                 answer = _response_text(result)
                 with self._lock:
                     cancelled = self._stop_event.is_set() or self._active_request_id != request_id
                 if not cancelled and answer:
+                    self.chat_answer.emit(session_id, answer)
                     self.answer_ready.emit(answer)
             except Exception as exc:
                 with self._lock:
                     cancelled = self._stop_event.is_set() or self._active_request_id != request_id
                 if not cancelled:
+                    logging.getLogger(__name__).warning("Akira request failed: %s", exc)
+                    self.chat_error.emit(session_id, _friendly_error(exc))
                     self.error.emit(_friendly_error(exc))
             finally:
                 with self._lock:
                     if self._active_request_id == request_id:
                         self._active_request_id = None
+                    self._active_session_id = None
+                self.chat_busy.emit(session_id, False)
                 self.busy.emit(False)

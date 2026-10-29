@@ -2,15 +2,32 @@
 
 import os
 import subprocess
+import sys
 import threading
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent
+def _runtime_directory():
+    override = os.environ.get("AKIRA_RUNTIME_DIR")
+    if override:
+        return Path(override).expanduser().resolve()
+    if sys.platform == "darwin":
+        root = Path.home() / "Library" / "Application Support"
+    elif sys.platform == "win32":
+        root = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local")))
+    else:
+        root = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local" / "state")))
+    return root / "Akira" / "runtime"
+
+
+# Never load mutable state shipped in a source checkout.
+RUNTIME_DIR = _runtime_directory()
 GROQ_API_KEY_ENV = "GROQ_API_KEY"
 MODEL = "openai/gpt-oss-120b"
 MAX_HISTORY = 12
 MAX_TOOL_ITERATIONS = 128
 MAX_TURN_PERSISTED = 16
+MODEL_REQUEST_TIMEOUT = 30.0
 MEMORY_FILE = str(PROJECT_ROOT / "memory.json")
 PERMISSIONS_FILE = str(PROJECT_ROOT / "permissions.json")
 SPOTIFY_TOKEN_FILE = str(PROJECT_ROOT / "spotify_token.json")
@@ -77,10 +94,10 @@ def create_groq_client():
                 api_key = _get_groq_api_key()
                 if not api_key:
                     raise KeyError(GROQ_API_KEY_ENV)
-                _client = Groq(api_key=api_key)
+                _client = Groq(api_key=api_key, timeout=MODEL_REQUEST_TIMEOUT, max_retries=0)
     return _client
 
 BACKGROUND_TASK_MAX_CONCURRENT = 3
 BACKGROUND_TASK_MAX_STORED = 100
-BACKGROUND_TASK_DIR = PROJECT_ROOT / "runtime" / "tasks"
-BACKGROUND_TASK_FILE = PROJECT_ROOT / "runtime" / "background_tasks.json"
+BACKGROUND_TASK_DIR = RUNTIME_DIR / "tasks"
+BACKGROUND_TASK_FILE = RUNTIME_DIR / "background_tasks.json"

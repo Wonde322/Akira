@@ -19,7 +19,9 @@ _STOPWORDS = {
 
 _ALIASES = {
     "браузер": {"browser", "open", "web"},
-    "интернет": {"browser", "web", "url", "open"},
+    "интернет": {"web_search", "search", "web"},
+    "погугли": {"web_search", "search", "web"},
+    "поиск": {"web_search", "search"},
     "сайт": {"browser", "web", "url", "open"},
     "видео": {"video", "youtube", "media"},
     "музыка": {"music", "spotify", "audio", "media"},

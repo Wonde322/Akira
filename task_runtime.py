@@ -12,8 +12,10 @@ from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-TASK_DIR = ROOT / "runtime" / "tasks"
-TASK_FILE = ROOT / "runtime" / "background_tasks.json"
+from config import RUNTIME_DIR
+
+TASK_DIR = RUNTIME_DIR / "tasks"
+TASK_FILE = RUNTIME_DIR / "background_tasks.json"
 MAX_CONCURRENT_TASKS = 3
 MAX_STORED_TASKS = 100
 _TERMINAL_STATUSES = {"completed", "failed", "cancelled", "interrupted"}
@@ -39,6 +41,7 @@ class TaskRuntime:
         self._lock = threading.RLock()
         self._tasks = {}
         self._futures = {}
+        self._closed = False
         self._load()
 
     @staticmethod
@@ -151,6 +154,8 @@ class TaskRuntime:
             return {"success": False, "error": "empty_goal", "output": "Нельзя создать background task с пустой целью."}
         failed_task = None
         with self._lock:
+            if self._closed:
+                return {"success": False, "error": "runtime_closed", "output": "Фоновый обработчик остановлен."}
             if self._active_count() >= self.max_workers:
                 return {"success": False, "error": "background_capacity", "output": f"Достигнут лимит одновременно работающих background tasks: {self.max_workers}."}
             task = self._make_task(goal, session_id, parent_event_id=parent_event_id, correlation_id=correlation_id, causation_depth=causation_depth)
@@ -223,14 +228,24 @@ class TaskRuntime:
                 task = self._tasks.get(task_id)
                 if task is None:
                     return None
-                if task["status"] == "cancelling":
+                cancelled_result = isinstance(result, dict) and result.get("error") == "cancelled"
+                failed_result = isinstance(result, dict) and result.get("success") is False
+                if task["status"] == "cancelling" or cancelled_result:
                     task.update(status="cancelled", finished_at=_now())
                     event_type = "task.cancelled"
                     event_payload = self._event_payload(task, error=task.get("error"))
+                elif failed_result:
+                    from capabilities.protocol import result_to_text
+                    detail = result_to_text(result)
+                    task.update(status="failed", result=None, error=detail, finished_at=_now())
+                    event_type = "task.failed"
+                    event_payload = self._event_payload(task, error=detail)
                 elif task["status"] != "cancelled":
-                    task.update(status="completed", result=str(result), error=None, finished_at=_now())
+                    from capabilities.protocol import result_to_text
+                    text = result_to_text(result) if isinstance(result, dict) and "success" in result else str(result)
+                    task.update(status="completed", result=text, error=None, finished_at=_now())
                     event_type = "task.completed"
-                    event_payload = self._event_payload(task, result=str(result))
+                    event_payload = self._event_payload(task, result=text)
                 event_task = dict(task)
                 self._save()
         except Exception as error:
@@ -311,7 +326,16 @@ class TaskRuntime:
             return {"success": False, "ready": True, "task_id": task_id, "error": task.get("error"), "status": status, "output": f"Background task {status}: {task.get('error') or ''}"}
         return {"success": True, "ready": False, "task_id": task_id, "status": status, "output": f"Task {task_id} ещё выполняется."}
 
+    def has_active(self):
+        with self._lock:
+            return self._active_count() > 0
+
     def shutdown(self, wait=True):
+        with self._lock:
+            self._closed = True
+            active = [task_id for task_id, task in self._tasks.items() if task["status"] in _ACTIVE_STATUSES]
+        for task_id in active:
+            self.cancel(task_id, "Приложение закрывается.")
         self._executor.shutdown(wait=bool(wait), cancel_futures=True)
 
 

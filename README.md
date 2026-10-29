@@ -1,0 +1,94 @@
+# Akira
+
+Персональный компьютерный агент для macOS. Основной вход — текстовое desktop-приложение. Голосовые модули сохранены отдельно; основное окно их не запускает.
+
+## Установка и запуск
+
+Нужны Python 3.11–3.12 и macOS.
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+export GROQ_API_KEY='ваш-ключ'
+python desktop.py
+```
+
+Ключ передаётся через окружение. Не добавляйте его в Git. Для управления Mac разрешите приложению, из которого запускается Python, доступ в настройках macOS: «Конфиденциальность и безопасность» → «Универсальный доступ» и «Запись экрана». При запросе macOS разрешите автоматизацию System Events.
+
+Вводите сообщение и нажимайте Enter; Shift+Enter добавляет перенос строки. Новые сообщения выполняются по очереди. Кнопка «Остановить» или отдельное сообщение «стоп» отменяет текущий запрос; следующий запрос из очереди сохраняется. Подтверждения действий отображаются в окне, отказ выбран по умолчанию.
+
+Отмена проверяется между шагами: уже начатый сетевой вызов или системное действие может завершиться до остановки. Один сетевой вызов модели ограничен 30 секундами. При 429 допускается до трёх повторов с суммарным ожиданием до 60 секунд по указанию сервера; оставшееся время видно в строке состояния, ожидание можно отменить; при отклонённом запросе отсутствующего зарегистрированного инструмента — одна повторная генерация с его схемой. Короткие продолжения учитывают предыдущие реплики; для обычного запроса выбирается до 6 схем, для GUI-плана — до 12. Простое открытие приложения не запускает GUI-план и снимки экрана. При закрытии окна обработчик отменяется; окно завершается после возврата уже начатого вызова, не уничтожая работающий поток.
+
+## Фоновые возможности
+
+При запуске окна автоматически включаются планировщик, обработчик фоновых задач, доставка результатов и локальный учёт активности. Голос и микрофон не запускаются.
+
+- Фоновые поручения: запуск, список, результат и отмена по ID. До трёх задач одновременно. Действия с общим Mac выполняются с исключительным доступом; независимые вычисления и чтение файлов могут продолжаться параллельно.
+- Расписание: разовый запуск или повторение с интервалом, просмотр и отмена. Работает, пока приложение запущено. После следующего запуска проверяет просроченные задания; при занятом обработчике сохраняет задание для повторной попытки. Прерванная процессом задача отмечается как interrupted, а не как выполненная.
+- Контекст: реакции на приложения и заголовки окон, вопросы и варианты дальнейших действий, режимы normal/focus/quiet. Периодическая проверка использует локальные метаданные, не вызывает модель и не делает непрерывные снимки экрана. Отключение awareness также приостанавливает учёт активности.
+- Результаты и ошибки фоновых задач приходят в чат. Вопросы и запросы разрешения показываются по очереди; вопрос можно пропустить без запуска действий.
+
+## Браузер и музыка
+
+Нужен установленный Google Chrome. Управление страницами использует отдельный профиль Akira: вкладки, переходы, чтение DOM, клики и ввод текста. YouTube ищет одно видео через yt-dlp и открывает найденную страницу; видео не скачивается.
+
+Spotify: треки, контекст исполнителя/альбома, продолжение, пауза и следующий трек. При первом запросе открывается подключение аккаунта; ожидание можно отменить. Токен сохраняется локально с правами 0600. При необходимости собственный Client ID задаётся через SPOTIFY_CLIENT_ID. Для управления воспроизведением через [Spotify Player API](https://developer.spotify.com/documentation/web-api/reference/start-a-users-playback) нужен Premium.
+
+Расписание, контекст и очередь уведомлений хранятся вне каталога исходников: на macOS — в Application Support/Akira/runtime. Сохранённое состояние из папки runtime в репозитории не импортируется. Тесты используют отдельный временный каталог. В сборке .app память и разрешения также сохраняются в Application Support/Akira.
+
+## Архитектура
+
+`AkiraGateway` нормализует ввод и передаёт `RequestContext` в `AgentRuntime`. Runtime владеет отменой и жизненным циклом, `agent_loop` — рассуждением и выполнением инструментов. `brain.py` — только совместимый интерфейс к тому же циклу. Отдельных исполнителей для конкретных приложений нет.
+
+## Проверки
+
+На Linux для полного набора нужны PortAudio, libsndfile, libegl1 и libgl1. В CI они устанавливаются автоматически.
+
+```bash
+python -m compileall -q .
+QT_QPA_PLATFORM=offscreen python -m pytest -q
+```
+
+Тесты используют подставные ответы модели и GUI-бэкенды. Они не проверяют действующий API-ключ, доступность модели у провайдера и реальные разрешения macOS. Проверка на целевом Mac: запустить окно, отправить обычный запрос, выполнить простое действие, отменить длинный запрос, отправить следующий запрос и закрыть окно.
+
+### Desktop chats
+
+The text window follows new replies after Qt finishes laying them out and shows
+three animated dots while the current chat is running. Use **+ Новый чат** and
+the header selector to keep separate conversations. Replies stay in the chat
+that submitted the request, even when another chat is selected. Transcripts and
+the selected chat are saved privately in `RUNTIME_DIR/desktop_chats.json`; after
+a restart the recent conversation restores model context on its next request.
+All chats share the existing serialized worker and permissions.
+
+### Animated core
+
+The desktop plays a single 256-phase, full-colour transparent animation with
+cyclic motion-compensated inbetweening. Alpha remains continuous at silhouettes;
+no palette quantization or per-frame coverage threshold is applied. Adjacent
+phases blend at a 16 ms refresh interval, including the last-to-first join.
+Amplitude changes continuously by scaling the same raster about its baseline,
+without crossfading differently sized rings. The timer stops when hidden.
+Request state and optional loopback FFT control amplitude and speed; the
+microphone is never opened. This is not a frequency-accurate spectrogram.
+
+`scripts/prepare_core_motion.py` rebuilds the atlas from the approved 4x4 RGBA
+keyframe sheet. Pillow, numpy and OpenCV are build-only requirements; the player
+uses Qt. It stores 256 frames instead of four separate 128-phase amplitude banks.
+
+### Restore the pre-redesign desktop
+
+The UI revision is reversible. The remote branch
+`backup/akira-before-design-2026-10-28` preserves the preceding app, including
+the 128-phase core animation. After closing Akira:
+
+```bash
+git fetch origin
+git switch backup/akira-before-design-2026-10-28
+.venv/bin/python desktop.py
+```
+
+Return to the new interface with `git switch fix/akira-runtime-stability`.
+This is a source-code restore point, not a backup of personal chats or memory.
+The redesign does not migrate or modify their storage formats.

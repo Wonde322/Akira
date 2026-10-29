@@ -13,11 +13,14 @@ import threading
 import time
 
 
+from config import RUNTIME_DIR
+
+
 class ProactiveInterruptionControl:
     MODES = {"normal", "focus", "quiet"}
 
-    def __init__(self, path="runtime/proactive_interruption_control.json", clock=None):
-        self.path = path
+    def __init__(self, path=None, clock=None):
+        self.path = str(path) if path is not None else str(RUNTIME_DIR / "proactive_interruption_control.json")
         self._clock = clock or time.time
         self._lock = threading.RLock()
         self._data = self._load()

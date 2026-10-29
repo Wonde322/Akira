@@ -57,7 +57,7 @@ def open_target(target):
     if raw.startswith(("http://", "https://")):
         result = subprocess.run(["open", raw], text=True, capture_output=True, timeout=4)
         if result.returncode:
-            return _fail("open_failed", error_detail=result.stderr.strip())
+            return _fail("open_failed", result.stderr.strip(), error_detail=result.stderr.strip())
         return _ok({"target": raw, "kind": "url"})
 
     path = Path(raw).expanduser()
@@ -66,13 +66,13 @@ def open_target(target):
             return _fail("not_allowed")
         result = subprocess.run(["open", str(path)], text=True, capture_output=True, timeout=4)
         if result.returncode:
-            return _fail("open_failed", error_detail=result.stderr.strip())
+            return _fail("open_failed", result.stderr.strip(), error_detail=result.stderr.strip())
         return _ok({"target": str(path), "kind": "path"})
 
     name = _name(raw)
     result = subprocess.run(["open", "-a", name], text=True, capture_output=True, timeout=4)
     if result.returncode:
-        return _fail("open_failed", error_detail=result.stderr.strip())
+        return _fail("open_failed", result.stderr.strip(), error_detail=result.stderr.strip())
 
     data = {"target": name, "kind": "app"}
     if backend is not None:

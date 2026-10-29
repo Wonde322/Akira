@@ -12,9 +12,12 @@ import threading
 from datetime import datetime, timezone
 
 
+from config import RUNTIME_DIR
+
+
 class ProactiveFeedbackStore:
-    def __init__(self, path="runtime/proactive_feedback.json", suppress_after=3):
-        self.path = path
+    def __init__(self, path=None, suppress_after=3):
+        self.path = str(path) if path is not None else str(RUNTIME_DIR / "proactive_feedback.json")
         self.suppress_after = max(1, int(suppress_after))
         self._lock = threading.RLock()
         self._data = self._load()
