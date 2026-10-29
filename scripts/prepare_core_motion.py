@@ -37,25 +37,15 @@ def build(source, destination):
         gray.append(cv2.cvtColor((rgba[..., :3]*255).astype(np.uint8), cv2.COLOR_RGB2GRAY))
     estimator = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_MEDIUM)
     estimator.setUseSpatialPropagation(True)
-    # Keep one material/texture throughout the cycle. The source sheet changes
-    # both its lighting and topology; crossfading those paintings looks like a cut.
-    # Nearby source poses guide a continuous deformation of the approved first
-    # painting instead. Periodic cubic motion matches velocity at every join.
-    reference = keys[0]
-    fields = [np.zeros((HEIGHT, WIDTH, 2), np.float32)]
-    for j in (1, 2, 3):
-        displacement = estimator.calc(gray[0], gray[j], None)
-        displacement = cv2.GaussianBlur(displacement, (0, 0), 1.2)
-        fields.append(np.clip(displacement, -12, 12))
     frames = []
-    for index in range(PHASES):
-        position = index * len(fields) / PHASES
-        k, t = int(position), position % 1
-        p0, p1, p2, p3 = [fields[(k+offset) % len(fields)] for offset in (-1, 0, 1, 2)]
-        displacement = .5*((2*p1)+(-p0+p2)*t +
-                           (2*p0-5*p1+4*p2-p3)*t*t +
-                           (-p0+3*p1-3*p2+p3)*t*t*t)
-        frames.append(inverse_warp(reference, displacement, 1.0))
+    for i, a in enumerate(keys):
+        j = (i+1) % len(keys)
+        forward = estimator.calc(gray[i], gray[j], None)
+        backward = estimator.calc(gray[j], gray[i], None)
+        for step in range(PHASES//16):
+            t = step/(PHASES//16)
+            frames.append(inverse_warp(a, forward, t)*(1-t) +
+                          inverse_warp(keys[j], backward, 1-t)*t)
     # Circular filtering also smooths velocity changes at source keyframes and
     # the last/first join. Work in premultiplied RGBA to retain clean edges.
     atlas = Image.new('RGBA', (WIDTH*8, HEIGHT*(PHASES//8)))
