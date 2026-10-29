@@ -65,7 +65,8 @@ All chats share the existing serialized worker and permissions.
 ### Animated core
 
 The desktop plays a single 256-phase, full-colour transparent animation with
-cyclic motion-compensated inbetweening. Alpha remains continuous at silhouettes;
+periodic cubic deformation of one consistent plasma painting. Nearby reference
+poses guide the motion; the player never crossfades differently coloured paintings. Alpha remains continuous at silhouettes;
 no palette quantization or per-frame coverage threshold is applied. Adjacent
 phases blend at a 16 ms refresh interval, including the last-to-first join.
 Amplitude changes continuously by scaling the same raster about its baseline,

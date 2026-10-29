@@ -41,7 +41,7 @@ class CoreWidget(QWidget):
         live = bool(self.bands) and now-self.audio_at < .5
         target = max(max(self.bands) if live else 0, .65 if self.working else .025)
         self.energy += (target-self.energy) * (.2 if target>self.energy else .08)
-        self.phase = (self.phase + min(.1, now-self.last_tick)*(60+108*self.energy)) % 256
+        self.phase = (self.phase + min(1/30, max(0.0, now-self.last_tick))*(60+108*self.energy)) % 256
         self.last_tick = now
         # Hysteresis avoids rapidly switching amplitude banks on quiet transients.
         bounds = (.15,.45,.8)

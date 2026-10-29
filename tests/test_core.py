@@ -112,3 +112,27 @@ def test_prepared_cycle_has_no_outlier_at_loop_seam(qapp):
     seam = np.abs(first-previous).mean()
     assert np.median(differences) > 0
     assert seam < 2 * np.median(differences)
+
+
+def test_cycle_does_not_switch_plasma_colour_between_poses(qapp):
+    import numpy as np
+    from PySide6.QtGui import QImage
+    from desktop_app.core import CoreWidget
+    core = CoreWidget()
+    colours = []
+    for frame in core.frames:
+        image = frame.toImage().convertToFormat(QImage.Format.Format_RGBA8888_Premultiplied)
+        rgba = np.frombuffer(image.bits(), dtype=np.uint8).reshape(-1, 4).astype(float)
+        colours.append(rgba[:, :3].sum(axis=0)/max(1, rgba[:, 3].sum()))
+    # A changing pose must not turn the entire coloured ring pale/white.
+    assert np.ptp(colours, axis=0).max() < .02
+
+
+def test_timer_stall_does_not_skip_a_large_part_of_the_cycle(qapp, monkeypatch):
+    from desktop_app.core import CoreWidget
+    core = CoreWidget()
+    core.energy = 1
+    core.set_working(True)
+    monkeypatch.setattr('desktop_app.core.time.monotonic', lambda: core.last_tick + 2)
+    core._advance()
+    assert 0 < core.phase <= 168/30
