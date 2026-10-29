@@ -22,6 +22,31 @@ def inverse_warp(frame, flow, amount):
     return cv2.remap(frame, mx, my, cv2.INTER_LINEAR)
 
 
+def smooth_colour(atlas):
+    """Slow colour changes, preserving every frame's geometry and alpha."""
+    frames, means = [], []
+    for i in range(PHASES):
+        frame = np.array(atlas.crop((i%8*WIDTH, i//8*HEIGHT,
+                                    (i%8+1)*WIDTH, (i//8+1)*HEIGHT)))
+        weight = frame[..., 3:4].astype(np.float32)/255
+        means.append((frame[..., :3]*weight).sum((0, 1))/max(1, weight.sum()))
+        frames.append(frame)
+    means = np.asarray(means)
+    offsets = np.arange(-36, 37)
+    kernel = np.exp(-.5*(offsets/12)**2)
+    kernel /= kernel.sum()
+    target = sum(np.roll(means, int(offset), axis=0)*weight
+                 for offset, weight in zip(offsets, kernel))
+    gains = np.clip(target/np.maximum(means, 1), .8, 1.2)
+    result = Image.new('RGBA', atlas.size)
+    for i, frame in enumerate(frames):
+        rgb = np.clip(frame[..., :3].astype(np.float32)*gains[i], 0, 254)
+        frame[..., :3] = (np.rint(rgb/2)*2).astype(np.uint8)
+        frame[frame[..., 3] == 0, :3] = 0
+        result.paste(Image.fromarray(frame), ((i%8)*WIDTH, (i//8)*HEIGHT))
+    return result
+
+
 def build(source, destination):
     sheet = Image.open(source).convert('RGBA')
     keys, gray = [], []
@@ -62,7 +87,7 @@ def build(source, destination):
         rgba[rgba[..., 3] == 0, :3] = 0
         atlas.paste(Image.fromarray(rgba), ((i%8)*WIDTH, (i//8)*HEIGHT))
     # Preserve full colour and alpha; palette reduction causes contour flashing.
-    atlas.save(destination, optimize=True)
+    smooth_colour(atlas).save(destination, optimize=True)
 
 
 if __name__ == '__main__':
